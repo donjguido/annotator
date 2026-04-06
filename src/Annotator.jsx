@@ -1,0 +1,697 @@
+import { useState, useRef, useCallback, useEffect } from "react";
+
+const COLORS = [
+  { name: "Lemon", bg: "#FEF3C7", border: "#F59E0B", text: "#92400E" },
+  { name: "Rose", bg: "#FCE7F3", border: "#EC4899", text: "#9D174D" },
+  { name: "Sky", bg: "#DBEAFE", border: "#3B82F6", text: "#1E3A8A" },
+  { name: "Mint", bg: "#D1FAE5", border: "#10B981", text: "#065F46" },
+  { name: "Lilac", bg: "#EDE9FE", border: "#8B5CF6", text: "#5B21B6" },
+];
+
+const FONT = `'Literata', 'Georgia', serif`;
+const MONO = `'JetBrains Mono', 'Fira Code', monospace`;
+
+const HINTS = [
+  "Select text in the document to create a highlight",
+  "Type /skip to leave a comment without asking Claude",
+  "Type /search to ask Claude with web search enabled",
+  "Type /find to search within the document text",
+  "Toggle full-ctx/passage to control how much context Claude sees",
+  "Export as JSON, then re-import to pick up where you left off",
+  "Click a highlight color dot in the sidebar to change it",
+  "Set your username in the header for tracked annotations",
+];
+
+async function extractPdfText(file) {
+  const pdfjsLib = window.pdfjsLib;
+  const buf = await file.arrayBuffer();
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  let text = "";
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const c = await page.getTextContent();
+    text += (i > 1 ? "\n\n" : "") + c.items.map((x) => x.str).join(" ");
+  }
+  return text;
+}
+
+async function callClaude({ messages, highlightedText, fullDoc, useContext, useWebSearch }) {
+  const ctx = useContext
+    ? (fullDoc.length > 6000 ? fullDoc.slice(0, 6000) + "\n…[truncated]" : fullDoc)
+    : "";
+  const systemParts = [
+    "You are a reading assistant. The user highlighted this passage:",
+    `"${highlightedText}"`,
+    useContext && ctx ? `\nFull document context:\n${ctx}` : "",
+    "\nAnswer clearly and concisely (2-5 sentences unless more is needed).",
+  ].filter(Boolean).join("\n");
+  const body = {
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1000,
+    system: systemParts,
+    messages,
+  };
+  if (useWebSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  return data.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "No response.";
+}
+
+function downloadFile(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.style.display = "none";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 200);
+}
+
+function getTextOffset(container, targetNode, targetOffset) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => {
+      let el = node.parentElement;
+      while (el && el !== container) {
+        if (el.tagName === "SUP" && el.dataset.badge === "true") return NodeFilter.FILTER_REJECT;
+        el = el.parentElement;
+      }
+      return NodeFilter.FILTER_ACCEPT;
+    }
+  });
+  let count = 0;
+  while (walker.nextNode()) {
+    if (walker.currentNode === targetNode) return count + targetOffset;
+    count += walker.currentNode.textContent.length;
+  }
+  return null;
+}
+
+function formatTime(ts) {
+  if (!ts) return "";
+  const d = new Date(ts);
+  const now = new Date();
+  const diff = now - d;
+  if (diff < 60000) return "just now";
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function AutoTextarea({ value, onChange, onKeyDown, placeholder, inputRef, maxH = 120 }) {
+  const innerRef = useRef(null);
+  const ref = inputRef || innerRef;
+  useEffect(() => {
+    if (ref.current) {
+      ref.current.style.height = "auto";
+      ref.current.style.height = Math.min(ref.current.scrollHeight, maxH) + "px";
+    }
+  }, [value, maxH]);
+  return (
+    <textarea ref={ref} value={value} onChange={onChange} onKeyDown={onKeyDown} placeholder={placeholder}
+      rows={1}
+      style={{
+        flex: 1, padding: "8px 10px", fontFamily: FONT, fontSize: 13,
+        border: "1px solid #d4d0c8", borderRadius: 8, resize: "none",
+        background: "#fff", outline: "none", lineHeight: 1.5,
+        overflow: "auto", maxHeight: maxH, transition: "height 0.1s ease",
+      }} />
+  );
+}
+
+function MiniColorPicker({ current, onChange, style }) {
+  return (
+    <div style={{ display: "flex", gap: 3, ...style }}>
+      {COLORS.map((c, i) => (
+        <button key={i} onClick={(e) => { e.stopPropagation(); onChange(i); }} title={c.name}
+          style={{
+            width: 14, height: 14, borderRadius: "50%", cursor: "pointer", transition: "all 0.12s",
+            border: current === i ? `2px solid ${c.border}` : "1.5px solid #d4d0c8",
+            background: c.bg, transform: current === i ? "scale(1.2)" : "scale(1)",
+            padding: 0, lineHeight: 0,
+          }} />
+      ))}
+    </div>
+  );
+}
+
+export default function Annotator() {
+  const [doc, setDoc] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [annotations, setAnnotations] = useState([]);
+  const [activeColor, setActiveColor] = useState(0);
+  const [selectedId, setSelectedId] = useState(null);
+  const [inputText, setInputText] = useState("");
+  const [loadingId, setLoadingId] = useState(null);
+  const [mode, setMode] = useState("edit");
+  const [copied, setCopied] = useState(false);
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfReady, setPdfReady] = useState(false);
+  const [editingNote, setEditingNote] = useState(null);
+  const [editText, setEditText] = useState("");
+  const [useContext, setUseContext] = useState(true);
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [username, setUsername] = useState("");
+  const [showUserEdit, setShowUserEdit] = useState(false);
+  const [userDraft, setUserDraft] = useState("");
+  const [hintIdx, setHintIdx] = useState(0);
+  const textRef = useRef(null);
+  const fileRef = useRef(null);
+  const importRef = useRef(null);
+  const inputRef = useRef(null);
+  const threadEndRef = useRef(null);
+
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.href = "https://fonts.googleapis.com/css2?family=Literata:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap";
+    link.rel = "stylesheet";
+    document.head.appendChild(link);
+    const script = document.createElement("script");
+    script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+    script.onload = () => {
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+      setPdfReady(true);
+    };
+    document.head.appendChild(script);
+  }, []);
+
+  // Rotating hints
+  useEffect(() => {
+    const iv = setInterval(() => setHintIdx(h => (h + 1) % HINTS.length), 5000);
+    return () => clearInterval(iv);
+  }, []);
+
+  useEffect(() => {
+    if (threadEndRef.current) threadEndRef.current.scrollIntoView({ behavior: "smooth" });
+  }, [annotations, selectedId, loadingId]);
+
+  useEffect(() => {
+    if (selectedId != null) setTimeout(() => inputRef.current?.focus(), 80);
+  }, [selectedId]);
+
+  const handlePdf = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPdfLoading(true);
+    try {
+      const text = await extractPdfText(file);
+      setDoc(text); setFileName(file.name); setAnnotations([]); setMode("annotate");
+    } catch { alert("Could not extract text from this PDF."); }
+    setPdfLoading(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.documentText) setDoc(data.documentText);
+        if (data.source) setFileName(data.source);
+        if (data.annotations) {
+          setAnnotations(data.annotations.map(a => ({
+            id: a.id || Date.now() + Math.random(),
+            start: a.charRange[0],
+            end: a.charRange[1],
+            text: a.highlightedText,
+            color: COLORS.findIndex(c => c.name === a.color) >= 0 ? COLORS.findIndex(c => c.name === a.color) : 0,
+            thread: (a.thread || []).map(m => ({
+              role: m.role === "comment" ? "user" : m.role,
+              content: m.content,
+              isComment: m.role === "comment",
+              author: m.author || "",
+              timestamp: m.timestamp || null,
+            })),
+          })));
+        }
+        setMode("annotate");
+      } catch { alert("Could not parse this JSON file."); }
+    };
+    reader.readAsText(file);
+    if (importRef.current) importRef.current.value = "";
+  };
+
+  const handleSelect = useCallback(() => {
+    if (mode !== "annotate" || !textRef.current) return;
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed) return;
+    const range = sel.getRangeAt(0);
+    if (!textRef.current.contains(range.startContainer) || !textRef.current.contains(range.endContainer)) return;
+    const startOffset = getTextOffset(textRef.current, range.startContainer, range.startOffset);
+    const endOffset = getTextOffset(textRef.current, range.endContainer, range.endOffset);
+    if (startOffset == null || endOffset == null || startOffset === endOffset) return;
+    const s = Math.min(startOffset, endOffset);
+    const en = Math.max(startOffset, endOffset);
+    const hl = doc.slice(s, en);
+    if (!hl.trim()) return;
+    const overlaps = annotations.some(a => (s >= a.start && s < a.end) || (en > a.start && en <= a.end) || (s <= a.start && en >= a.end));
+    if (overlaps) { sel.removeAllRanges(); return; }
+    const newAnno = { id: Date.now(), start: s, end: en, text: hl, color: activeColor, thread: [] };
+    setAnnotations(prev => [...prev, newAnno].sort((a, b) => a.start - b.start));
+    setSelectedId(newAnno.id);
+    setInputText("");
+    sel.removeAllRanges();
+  }, [mode, activeColor, annotations, doc]);
+
+  const changeAnnoColor = (id, newColor) => {
+    setAnnotations(prev => prev.map(a => a.id === id ? { ...a, color: newColor } : a));
+  };
+
+  const parseCommand = (text) => {
+    const trimmed = text.trim();
+    if (trimmed.startsWith("/skip")) return { type: "skip", content: trimmed.slice(5).trim() };
+    if (trimmed.startsWith("/search ")) return { type: "search", content: trimmed.slice(8).trim() };
+    if (trimmed.startsWith("/find ")) return { type: "find", content: trimmed.slice(6).trim() };
+    return { type: "ask", content: trimmed };
+  };
+
+  const handleFind = (annoId, query) => {
+    if (!query) return;
+    const lower = doc.toLowerCase();
+    const qLower = query.toLowerCase();
+    const matches = [];
+    let idx = 0;
+    while ((idx = lower.indexOf(qLower, idx)) !== -1) {
+      const start = Math.max(0, idx - 80);
+      const end = Math.min(doc.length, idx + query.length + 80);
+      matches.push("…" + doc.slice(start, end).replace(/\n/g, " ") + "…");
+      idx += query.length;
+    }
+    const result = matches.length
+      ? `Found ${matches.length} match${matches.length > 1 ? "es" : ""}:\n\n${matches.slice(0, 5).map((m, i) => `${i + 1}. ${m}`).join("\n\n")}${matches.length > 5 ? `\n\n…and ${matches.length - 5} more` : ""}`
+      : `No matches found for "${query}".`;
+    const ts = new Date().toISOString();
+    setAnnotations(prev => prev.map(a => a.id === annoId
+      ? { ...a, thread: [...a.thread, { role: "user", content: `/find ${query}`, author: username, timestamp: ts }, { role: "assistant", content: result, author: "system", timestamp: ts }] }
+      : a));
+  };
+
+  const sendMessage = async (id) => {
+    const anno = annotations.find(a => a.id === id);
+    if (!anno || !inputText.trim()) return;
+    const parsed = parseCommand(inputText);
+    const ts = new Date().toISOString();
+
+    if (parsed.type === "skip") {
+      const comment = parsed.content;
+      if (comment) {
+        setAnnotations(prev => prev.map(a => a.id === id
+          ? { ...a, thread: [...a.thread, { role: "user", content: comment, isComment: true, author: username, timestamp: ts }] }
+          : a));
+      }
+      setInputText(""); return;
+    }
+
+    if (parsed.type === "find") { handleFind(id, parsed.content); setInputText(""); return; }
+
+    const doWebSearch = parsed.type === "search";
+    const userContent = parsed.content;
+    if (!userContent) return;
+
+    const newThread = [...anno.thread, { role: "user", content: (doWebSearch ? "🌐 " : "") + userContent, author: username, timestamp: ts }];
+    setAnnotations(prev => prev.map(a => a.id === id ? { ...a, thread: newThread } : a));
+    setInputText("");
+    setLoadingId(id);
+
+    const apiMessages = [];
+    for (const m of newThread) {
+      if (m.isComment) continue;
+      if (apiMessages.length > 0 && apiMessages[apiMessages.length - 1].role === m.role) continue;
+      apiMessages.push({ role: m.role, content: m.content });
+    }
+    if (apiMessages.length > 0 && apiMessages[0].role !== "user") apiMessages.shift();
+
+    try {
+      const answer = await callClaude({ messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext, useWebSearch: doWebSearch });
+      setAnnotations(prev => prev.map(a => a.id === id
+        ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: "Claude", timestamp: new Date().toISOString() }] }
+        : a));
+    } catch {
+      setAnnotations(prev => prev.map(a => a.id === id
+        ? { ...a, thread: [...a.thread, { role: "assistant", content: "Error getting response.", author: "Claude", timestamp: new Date().toISOString() }] }
+        : a));
+    }
+    setLoadingId(null);
+  };
+
+  const saveEdit = (annoId, msgIdx) => {
+    setAnnotations(prev => prev.map(a => {
+      if (a.id !== annoId) return a;
+      const t = [...a.thread]; t[msgIdx] = { ...t[msgIdx], content: editText, editedAt: new Date().toISOString() };
+      return { ...a, thread: t };
+    }));
+    setEditingNote(null); setEditText("");
+  };
+
+  const deleteAnno = (id) => { setAnnotations(prev => prev.filter(a => a.id !== id)); if (selectedId === id) setSelectedId(null); };
+  const deleteMessage = (annoId, msgIdx) => { setAnnotations(prev => prev.map(a => a.id !== annoId ? a : { ...a, thread: a.thread.slice(0, msgIdx) })); };
+
+  const exportMarkdown = () => {
+    if (!annotations.length) return;
+    let md = `# Annotations${fileName ? ` — ${fileName}` : ""}\n\n`;
+    annotations.forEach((a, i) => {
+      md += `## Annotation ${i + 1} (${COLORS[a.color].name})\n\n> ${a.text}\n\n`;
+      a.thread.forEach(m => {
+        const who = m.author || (m.role === "user" ? "User" : "Claude");
+        const time = m.timestamp ? ` (${new Date(m.timestamp).toLocaleString()})` : "";
+        if (m.isComment) md += `**💬 ${who}${time}:** ${m.content}\n\n`;
+        else if (m.role === "user") md += `**Q — ${who}${time}:** ${m.content}\n\n`;
+        else md += `**A — ${who}${time}:** ${m.content}\n\n`;
+      });
+      md += `---\n\n`;
+    });
+    downloadFile(md, `annotations${fileName ? "_" + fileName.replace(/\.pdf$/i, "") : ""}.md`, "text/markdown");
+  };
+
+  const exportJSON = () => {
+    if (!annotations.length) return;
+    const data = {
+      source: fileName || "pasted text",
+      documentText: doc,
+      exported: new Date().toISOString(),
+      annotations: annotations.map((a, i) => ({
+        id: a.id, index: i + 1, color: COLORS[a.color].name, charRange: [a.start, a.end], highlightedText: a.text,
+        thread: a.thread.map(m => ({ role: m.isComment ? "comment" : m.role, content: m.content, author: m.author || "", timestamp: m.timestamp || null })),
+      })),
+    };
+    downloadFile(JSON.stringify(data, null, 2), `annotations${fileName ? "_" + fileName.replace(/\.pdf$/i, "") : ""}.json`, "application/json");
+  };
+
+  const exportClipboard = () => {
+    if (!annotations.length) return;
+    const lines = annotations.map((a, i) => {
+      const quote = `"${a.text.length > 150 ? a.text.slice(0, 150) + "…" : a.text}"`;
+      const msgs = a.thread.map(m => {
+        const who = m.author ? ` [${m.author}]` : "";
+        if (m.isComment) return `   💬${who} ${m.content}`;
+        return `   ${m.role === "user" ? "Q" : "A"}${who}: ${m.content}`;
+      }).join("\n");
+      return `${i + 1}. ${quote}${msgs ? "\n" + msgs : ""}`;
+    }).join("\n\n");
+    navigator.clipboard.writeText(`Annotations${fileName ? ` — ${fileName}` : ""}:\n\n${lines}`).then(() => {
+      setCopied(true); setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const renderText = () => {
+    if (!doc) return null;
+    if (!annotations.length) return doc;
+    const parts = []; let last = 0;
+    annotations.forEach(a => {
+      if (a.start > last) parts.push(<span key={`t-${last}`}>{doc.slice(last, a.start)}</span>);
+      const c = COLORS[a.color]; const active = selectedId === a.id;
+      parts.push(
+        <span key={`h-${a.id}`}
+          onClick={e => { e.stopPropagation(); setSelectedId(a.id); setInputText(""); }}
+          style={{ backgroundColor: active ? c.border + "33" : c.bg, borderBottom: `2px solid ${c.border}`, borderRadius: 2, cursor: "pointer", padding: "1px 0", transition: "all 0.15s ease", outline: active ? `2px solid ${c.border}` : "none", outlineOffset: 1 }}>
+          {doc.slice(a.start, a.end)}
+          {a.thread.length > 0 && <sup data-badge="true" style={{ fontSize: 9, color: c.border, fontFamily: MONO, fontWeight: 500, marginLeft: 1 }}>{a.thread.filter(m => m.role === "user").length || "•"}</sup>}
+        </span>
+      );
+      last = a.end;
+    });
+    if (last < doc.length) parts.push(<span key={`t-${last}`}>{doc.slice(last)}</span>);
+    return parts;
+  };
+
+  const currentAnno = annotations.find(a => a.id === selectedId);
+  const cmdHints = [
+    { cmd: "/skip", desc: "comment (no AI)" },
+    { cmd: "/search", desc: "ask + web search" },
+    { cmd: "/find", desc: "search in document" },
+  ];
+
+  return (
+    <div style={{ fontFamily: FONT, height: "100vh", display: "flex", flexDirection: "column", background: "#FAF9F6", color: "#1a1a1a" }}>
+      {/* Header */}
+      <div style={{ padding: "10px 20px", borderBottom: "1px solid #e5e2db", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div>
+            <h1 style={{ margin: 0, fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em" }}>Annotator</h1>
+            <p style={{ margin: "1px 0 0", fontSize: 11, opacity: 0.45, fontFamily: MONO }}>{fileName ? `📄 ${fileName}` : "paste or upload → highlight → ask"}</p>
+          </div>
+          {/* Username */}
+          <div style={{ marginLeft: 8 }}>
+            {showUserEdit ? (
+              <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <input value={userDraft} onChange={e => setUserDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === "Enter") { setUsername(userDraft.trim()); setShowUserEdit(false); } }}
+                  placeholder="Your name…" autoFocus
+                  style={{ padding: "3px 8px", fontFamily: MONO, fontSize: 11, border: "1px solid #d4d0c8", borderRadius: 5, outline: "none", width: 110 }} />
+                <button onClick={() => { setUsername(userDraft.trim()); setShowUserEdit(false); }}
+                  style={{ padding: "3px 6px", borderRadius: 4, border: "none", background: "#1a1a1a", color: "#fff", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>✓</button>
+              </div>
+            ) : (
+              <button onClick={() => { setUserDraft(username); setShowUserEdit(true); }}
+                style={{ padding: "3px 10px", borderRadius: 12, border: "1px solid #d4d0c8", background: username ? "#EDE9FE" : "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11, transition: "all 0.15s" }}>
+                {username ? `👤 ${username}` : "👤 Set name"}
+              </button>
+            )}
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          <input ref={fileRef} type="file" accept=".pdf" onChange={handlePdf} style={{ display: "none" }} />
+          <input ref={importRef} type="file" accept=".json" onChange={handleImport} style={{ display: "none" }} />
+          <button onClick={() => fileRef.current?.click()} disabled={!pdfReady || pdfLoading}
+            style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: pdfLoading ? "#FEF3C7" : "transparent", cursor: pdfReady ? "pointer" : "not-allowed", fontFamily: MONO, fontSize: 11, opacity: pdfReady ? 1 : 0.4 }}>
+            {pdfLoading ? "⏳…" : "📎 PDF"}
+          </button>
+          <button onClick={() => importRef.current?.click()}
+            style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+            📥 Import
+          </button>
+          <div style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: "1px solid #d4d0c8" }}>
+            {["edit", "annotate"].map(m => (
+              <button key={m} onClick={() => setMode(m)}
+                style={{ padding: "5px 10px", border: "none", cursor: "pointer", fontFamily: MONO, fontSize: 11, background: mode === m ? "#1a1a1a" : "transparent", color: mode === m ? "#fff" : "#1a1a1a", transition: "all 0.15s" }}>
+                {m === "edit" ? "✏️ Edit" : "🖍️ Annotate"}
+              </button>
+            ))}
+          </div>
+          {mode === "annotate" && (
+            <button onClick={() => setUseContext(v => !v)}
+              title={useContext ? "Claude sees full document" : "Claude sees passage only"}
+              style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${useContext ? "#3B82F6" : "#d4d0c8"}`, background: useContext ? "#DBEAFE" : "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+              {useContext ? "📄 Full ctx" : "✂️ Passage"}
+            </button>
+          )}
+          {mode === "annotate" && annotations.length > 0 && (
+            <div style={{ position: "relative" }}>
+              <button onClick={() => setShowExportMenu(v => !v)}
+                style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: copied ? "#D1FAE5" : "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+                {copied ? "✓ Copied!" : "📋 Export ▾"}
+              </button>
+              {showExportMenu && (
+                <div style={{ position: "absolute", top: "100%", right: 0, marginTop: 4, background: "#fff", border: "1px solid #d4d0c8", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.1)", zIndex: 20, overflow: "hidden", minWidth: 180 }}
+                  onClick={e => e.stopPropagation()}>
+                  {[
+                    { label: "📋 Copy to clipboard", fn: () => { exportClipboard(); setShowExportMenu(false); } },
+                    { label: "📝 Download Markdown", fn: () => { exportMarkdown(); setShowExportMenu(false); } },
+                    { label: "📦 Download JSON", fn: () => { exportJSON(); setShowExportMenu(false); } },
+                  ].map((item, i) => (
+                    <button key={i} onClick={item.fn}
+                      style={{ display: "block", width: "100%", padding: "10px 14px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: MONO, fontSize: 11, borderBottom: i < 2 ? "1px solid #f0ede8" : "none" }}
+                      onMouseEnter={e => e.target.style.background = "#f7f6f3"} onMouseLeave={e => e.target.style.background = "transparent"}>
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Body */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }} onClick={() => showExportMenu && setShowExportMenu(false)}>
+        {/* Document pane */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 24 }}>
+          {mode === "edit" ? (
+            <textarea value={doc} onChange={e => { setDoc(e.target.value); setAnnotations([]); }}
+              placeholder="Paste your document text here, or upload a PDF…"
+              style={{ width: "100%", height: "100%", minHeight: 400, padding: 20, fontFamily: FONT, fontSize: 15, lineHeight: 1.75, border: "1px solid #d4d0c8", borderRadius: 10, resize: "none", background: "#fff", color: "#1a1a1a", outline: "none", boxSizing: "border-box" }} />
+          ) : (
+            <div>
+              <div style={{ display: "flex", gap: 6, marginBottom: 12, alignItems: "center" }}>
+                <span style={{ fontSize: 11, fontFamily: MONO, opacity: 0.5, marginRight: 4 }}>color:</span>
+                {COLORS.map((c, i) => (
+                  <button key={i} onClick={() => setActiveColor(i)} title={c.name}
+                    style={{ width: 20, height: 20, borderRadius: "50%", border: activeColor === i ? `2.5px solid ${c.border}` : "2px solid #d4d0c8", background: c.bg, cursor: "pointer", transition: "all 0.15s", transform: activeColor === i ? "scale(1.15)" : "scale(1)" }} />
+                ))}
+                <span style={{ fontSize: 11, fontFamily: MONO, opacity: 0.3, marginLeft: 8 }}>select text to highlight</span>
+              </div>
+              <div ref={textRef} onMouseUp={handleSelect}
+                style={{ padding: 24, background: "#fff", border: "1px solid #d4d0c8", borderRadius: 10, fontSize: 15, lineHeight: 1.85, minHeight: 400, whiteSpace: "pre-wrap", cursor: "text", userSelect: "text" }}>
+                {doc ? renderText() : <span style={{ opacity: 0.3, fontStyle: "italic" }}>Switch to Edit mode first.</span>}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Side pane */}
+        {mode === "annotate" && (
+          <div style={{ width: 370, minWidth: 300, borderLeft: "1px solid #e5e2db", background: "#fff", display: "flex", flexDirection: "column", flexShrink: 0 }}>
+            <div style={{ padding: "10px 16px", borderBottom: "1px solid #e5e2db", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+              <span style={{ fontSize: 12, fontFamily: MONO, fontWeight: 500, opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.04em" }}>
+                {currentAnno ? "Annotation" : `${annotations.length} annotation${annotations.length !== 1 ? "s" : ""}`}
+              </span>
+              {currentAnno && (
+                <button onClick={() => setSelectedId(null)} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid #d4d0c8", background: "transparent", fontSize: 11, fontFamily: MONO, cursor: "pointer", opacity: 0.6 }}>← All</button>
+              )}
+            </div>
+
+            {currentAnno ? (() => {
+              const c = COLORS[currentAnno.color];
+              const showCmdHints = inputText.startsWith("/");
+              return (
+                <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
+                  {/* Highlighted passage */}
+                  <div style={{ padding: "12px 16px", borderBottom: "1px solid #e5e2db", background: c.bg, flexShrink: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                      <span style={{ fontSize: 10, fontFamily: MONO, opacity: 0.5, textTransform: "uppercase", letterSpacing: "0.04em" }}>Highlighted Passage</span>
+                      <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                        <MiniColorPicker current={currentAnno.color} onChange={(ci) => changeAnnoColor(currentAnno.id, ci)} />
+                        <button onClick={() => deleteAnno(currentAnno.id)} style={{ padding: "2px 8px", borderRadius: 4, border: "1px solid #fca5a5", background: "#fef2f2", color: "#b91c1c", fontSize: 10, fontFamily: MONO, cursor: "pointer", marginLeft: 4 }}>✕</button>
+                      </div>
+                    </div>
+                    <p style={{ fontSize: 13, fontStyle: "italic", margin: 0, color: c.text, lineHeight: 1.6, maxHeight: 120, overflowY: "auto" }}>
+                      "{currentAnno.text}"
+                    </p>
+                  </div>
+
+                  {/* Thread */}
+                  <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                    {currentAnno.thread.length === 0 && loadingId !== currentAnno.id && (
+                      <p style={{ fontSize: 12, opacity: 0.3, fontStyle: "italic", textAlign: "center", margin: "20px 0", lineHeight: 1.6 }}>
+                        {HINTS[hintIdx]}
+                      </p>
+                    )}
+                    {currentAnno.thread.map((msg, idx) => {
+                      const isUser = msg.role === "user";
+                      const isComment = msg.isComment;
+                      const isEditing = editingNote?.annoId === currentAnno.id && editingNote?.msgIdx === idx;
+                      return (
+                        <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start" }}>
+                          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 2, padding: "0 4px" }}>
+                            <span style={{ fontSize: 10, fontFamily: MONO, opacity: 0.35 }}>
+                              {isComment ? "💬" : ""} {msg.author || (isUser ? "You" : "Claude")}
+                            </span>
+                            {msg.timestamp && <span style={{ fontSize: 9, fontFamily: MONO, opacity: 0.25 }}>{formatTime(msg.timestamp)}</span>}
+                            {msg.editedAt && <span style={{ fontSize: 9, fontFamily: MONO, opacity: 0.2 }}>(edited)</span>}
+                          </div>
+                          {isEditing ? (
+                            <div style={{ width: "100%" }}>
+                              <textarea value={editText} onChange={e => setEditText(e.target.value)}
+                                style={{ width: "100%", minHeight: 50, padding: 8, fontFamily: FONT, fontSize: 13, border: `1px solid ${c.border}`, borderRadius: 8, resize: "vertical", background: "#fff", outline: "none", boxSizing: "border-box", lineHeight: 1.5 }} />
+                              <div style={{ display: "flex", gap: 4, marginTop: 4, justifyContent: "flex-end" }}>
+                                <button onClick={() => setEditingNote(null)} style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid #d4d0c8", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>Cancel</button>
+                                <button onClick={() => saveEdit(currentAnno.id, idx)} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: c.border, color: "#fff", fontSize: 10, fontFamily: MONO, cursor: "pointer" }}>Save</button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{
+                              padding: "8px 12px", borderRadius: 10, maxWidth: "95%",
+                              background: isComment ? "#FEF9C3" : isUser ? c.border + "15" : "#f7f6f3",
+                              border: `1px solid ${isComment ? "#FCD34D" : isUser ? c.border + "30" : "#e8e6e1"}`,
+                              borderLeft: isComment ? "3px solid #F59E0B" : undefined,
+                            }}>
+                              <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{msg.content}</p>
+                              <div style={{ display: "flex", gap: 4, marginTop: 5 }}>
+                                <button onClick={() => { setEditingNote({ annoId: currentAnno.id, msgIdx: idx }); setEditText(msg.content); }}
+                                  style={{ padding: "1px 6px", borderRadius: 3, border: "none", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer", opacity: 0.2, transition: "opacity 0.15s" }}
+                                  onMouseEnter={e => e.target.style.opacity = 0.6} onMouseLeave={e => e.target.style.opacity = 0.2}>edit</button>
+                                <button onClick={() => deleteMessage(currentAnno.id, idx)}
+                                  style={{ padding: "1px 6px", borderRadius: 3, border: "none", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer", opacity: 0.2, color: "#b91c1c", transition: "opacity 0.15s" }}
+                                  onMouseEnter={e => e.target.style.opacity = 0.6} onMouseLeave={e => e.target.style.opacity = 0.2}>delete</button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {loadingId === currentAnno.id && (
+                      <div style={{ alignSelf: "flex-start", padding: "8px 12px", borderRadius: 10, background: "#f7f6f3", border: "1px solid #e8e6e1" }}>
+                        <span style={{ fontSize: 13, fontFamily: MONO, opacity: 0.5, animation: "pulse 1.5s infinite" }}>Thinking…</span>
+                        <style>{`@keyframes pulse { 0%,100% { opacity: 0.3 } 50% { opacity: 1 } }`}</style>
+                      </div>
+                    )}
+                    <div ref={threadEndRef} />
+                  </div>
+
+                  {/* Command hints */}
+                  {showCmdHints && (
+                    <div style={{ padding: "6px 16px", borderTop: "1px solid #f0ede8", background: "#faf9f6", flexShrink: 0 }}>
+                      {cmdHints.filter(h => h.cmd.startsWith(inputText.split(" ")[0])).map(h => (
+                        <div key={h.cmd} onClick={() => { setInputText(h.cmd + " "); inputRef.current?.focus(); }}
+                          style={{ padding: "3px 0", fontSize: 11, fontFamily: MONO, cursor: "pointer", display: "flex", gap: 8 }}>
+                          <span style={{ color: c.border, fontWeight: 500 }}>{h.cmd}</span>
+                          <span style={{ opacity: 0.4 }}>{h.desc}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Input */}
+                  <div style={{ padding: "10px 16px 14px", borderTop: "1px solid #e5e2db", flexShrink: 0 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+                      <AutoTextarea inputRef={inputRef} value={inputText} onChange={e => setInputText(e.target.value)}
+                        onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); } }}
+                        placeholder={currentAnno.thread.length ? "Follow up, /skip, /search, /find…" : "Ask about this passage…"} />
+                      <button onClick={() => sendMessage(currentAnno.id)}
+                        disabled={!inputText.trim() || loadingId === currentAnno.id}
+                        style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: inputText.trim() ? c.border : "#ddd", color: "#fff", fontFamily: MONO, fontSize: 12, cursor: inputText.trim() ? "pointer" : "default", transition: "all 0.15s", flexShrink: 0, marginBottom: 1 }}>↵</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })() : (
+              <div style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}>
+                {annotations.length === 0 ? (
+                  <div style={{ textAlign: "center", padding: 20 }}>
+                    <p style={{ fontSize: 13, opacity: 0.4, lineHeight: 1.7, fontStyle: "italic", transition: "opacity 0.3s" }}>
+                      {HINTS[hintIdx]}
+                    </p>
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {annotations.map((a, i) => {
+                      const c = COLORS[a.color];
+                      const qCount = a.thread.filter(m => m.role === "user").length;
+                      return (
+                        <div key={a.id} onClick={() => { setSelectedId(a.id); setInputText(""); }}
+                          style={{ padding: "10px 12px", borderRadius: 8, border: "1px solid #e5e2db", cursor: "pointer", transition: "all 0.15s", background: "#fff" }}
+                          onMouseEnter={e => e.currentTarget.style.borderColor = c.border} onMouseLeave={e => e.currentTarget.style.borderColor = "#e5e2db"}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 5 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: "50%", background: c.border, flexShrink: 0 }} />
+                            <span style={{ fontSize: 11, fontFamily: MONO, opacity: 0.4 }}>#{i + 1}</span>
+                            {qCount > 0 && <span style={{ fontSize: 10, fontFamily: MONO, opacity: 0.4, marginLeft: "auto" }}>💬 {qCount}</span>}
+                          </div>
+                          <p style={{ fontSize: 12, margin: 0, fontStyle: "italic", opacity: 0.65, lineHeight: 1.4 }}>
+                            "{a.text.length > 80 ? a.text.slice(0, 80) + "…" : a.text}"
+                          </p>
+                          {a.thread.length > 0 && (
+                            <p style={{ fontSize: 11, margin: "5px 0 0", color: c.text, lineHeight: 1.4, fontFamily: MONO, opacity: 0.7 }}>
+                              {a.thread[a.thread.length - 1].isComment ? "💬" : a.thread[a.thread.length - 1].role === "assistant" ? "A:" : "Q:"} {a.thread[a.thread.length - 1].content.slice(0, 60)}{a.thread[a.thread.length - 1].content.length > 60 ? "…" : ""}
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

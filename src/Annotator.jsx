@@ -17,7 +17,7 @@ const HINTS = [
   "Type /search to ask Claude with web search enabled",
   "Type /find to search within the document text",
   "Type /ctx to include full document context for one prompt",
-  "Type @#N in a message to link to annotation N",
+  "Type @#N to link to annotation N (links survive reordering)",
   "Export as JSON, then re-import to pick up where you left off",
   "Click a highlight color dot in the sidebar to change it",
   "Highlights can overlap — click overlapping text to pick one",
@@ -142,22 +142,32 @@ function MiniColorPicker({ current, onChange, style }) {
   );
 }
 
-// Renders message content with @#N links to other annotations
+// Resolve @[id] links (and legacy @#N index links) to clickable annotation references
 function MessageContent({ content, annotations, onNavigate }) {
   const parts = [];
-  const regex = /@#(\d+)/g;
+  // Match @[id] (ID-based) or @#N (legacy index-based)
+  const regex = /@\[(\d+(?:\.\d+)?)\]|@#(\d+)/g;
   let last = 0;
   let match;
   while ((match = regex.exec(content)) !== null) {
     if (match.index > last) parts.push(content.slice(last, match.index));
-    const idx = parseInt(match[1]) - 1;
-    const anno = annotations[idx];
+    let anno;
+    if (match[1] != null) {
+      // ID-based link: @[id]
+      const id = parseFloat(match[1]);
+      anno = annotations.find(a => a.id === id);
+    } else {
+      // Legacy index-based link: @#N
+      const idx = parseInt(match[2]) - 1;
+      anno = annotations[idx];
+    }
     if (anno) {
       const c = COLORS[anno.color];
+      const label = anno.name || `#${annotations.indexOf(anno) + 1}`;
       parts.push(
         <span key={match.index} onClick={(e) => { e.stopPropagation(); onNavigate(anno.id); }}
           style={{ color: c.border, cursor: "pointer", fontWeight: 500, borderBottom: `1px solid ${c.border}`, fontFamily: MONO, fontSize: 11 }}>
-          @#{match[1]}{anno.name ? ` ${anno.name}` : ""}
+          @{label}
         </span>
       );
     } else {
@@ -167,6 +177,15 @@ function MessageContent({ content, annotations, onNavigate }) {
   }
   if (last < content.length) parts.push(content.slice(last));
   return <span style={{ whiteSpace: "pre-wrap" }}>{parts}</span>;
+}
+
+// Convert @#N index refs to @[id] for stable linking
+function resolveAnnoRefs(text, annotations) {
+  return text.replace(/@#(\d+)/g, (match, num) => {
+    const idx = parseInt(num) - 1;
+    const anno = annotations[idx];
+    return anno ? `@[${anno.id}]` : match;
+  });
 }
 
 export default function Annotator() {
@@ -362,7 +381,7 @@ export default function Annotator() {
       const comment = parsed.content;
       if (comment) {
         setAnnotations(prev => prev.map(a => a.id === id
-          ? { ...a, thread: [...a.thread, { role: "user", content: comment, isComment: true, author: username, timestamp: ts, withContext: false }] }
+          ? { ...a, thread: [...a.thread, { role: "user", content: resolveAnnoRefs(comment, prev), isComment: true, author: username, timestamp: ts, withContext: false }] }
           : a));
       }
       setInputText(""); return;
@@ -376,7 +395,7 @@ export default function Annotator() {
     if (!userContent) return;
 
     const prefix = (doWebSearch ? "🌐 " : "") + (withContext ? "📄 " : "");
-    const newThread = [...anno.thread, { role: "user", content: prefix + userContent, author: username, timestamp: ts, withContext }];
+    const newThread = [...anno.thread, { role: "user", content: resolveAnnoRefs(prefix + userContent, annotations), author: username, timestamp: ts, withContext }];
     setAnnotations(prev => prev.map(a => a.id === id ? { ...a, thread: newThread } : a));
     setInputText("");
     setLoadingId(id);
@@ -406,7 +425,7 @@ export default function Annotator() {
   const saveEditSimple = (annoId, msgIdx) => {
     setAnnotations(prev => prev.map(a => {
       if (a.id !== annoId) return a;
-      const t = [...a.thread]; t[msgIdx] = { ...t[msgIdx], content: editText, editedAt: new Date().toISOString() };
+      const t = [...a.thread]; t[msgIdx] = { ...t[msgIdx], content: resolveAnnoRefs(editText, prev), editedAt: new Date().toISOString() };
       return { ...a, thread: t };
     }));
     setEditingNote(null); setEditText("");
@@ -422,7 +441,7 @@ export default function Annotator() {
     const branchSnapshot = { thread: [...anno.thread], createdAt: new Date().toISOString() };
 
     // Truncate thread to the edit point (keep messages 0..msgIdx-1), then add edited message
-    const editedMsg = { ...anno.thread[msgIdx], content: editText, editedAt: new Date().toISOString() };
+    const editedMsg = { ...anno.thread[msgIdx], content: resolveAnnoRefs(editText, annotations), editedAt: new Date().toISOString() };
     const truncated = [...anno.thread.slice(0, msgIdx), editedMsg];
 
     const newBranches = [...anno.branches, branchSnapshot];

@@ -374,6 +374,7 @@ export default function Annotator() {
   const scrollPosRef = useRef({ edit: 0, annotate: 0 });
   const attachRef = useRef(null);
   const attachTargetRef = useRef(null);
+  const annotatedDocRef = useRef("");
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -426,6 +427,10 @@ export default function Annotator() {
   const switchMode = (newMode) => {
     if (newMode === mode) return;
     if (docPaneRef.current) scrollPosRef.current[mode] = docPaneRef.current.scrollTop;
+    if (newMode === "annotate" && doc !== annotatedDocRef.current) {
+      setAnnotations([]);
+      annotatedDocRef.current = doc;
+    }
     setMode(newMode);
   };
 
@@ -461,7 +466,7 @@ export default function Annotator() {
     try {
       const text = await extractFileText(file);
       if (!text.trim()) throw new Error("No text extracted");
-      setDoc(text); setFileName(file.name); setAnnotations([]); setMode("annotate");
+      setDoc(text); setFileName(file.name); setAnnotations([]); annotatedDocRef.current = text; setMode("annotate");
     } catch (err) { alert(`Could not extract text from ${file.name}: ${err.message}`); }
     setPdfLoading(false);
     if (fileRef.current) fileRef.current.value = "";
@@ -474,7 +479,7 @@ export default function Annotator() {
     reader.onload = (ev) => {
       try {
         const data = JSON.parse(ev.target.result);
-        if (data.documentText) setDoc(data.documentText);
+        if (data.documentText) { setDoc(data.documentText); annotatedDocRef.current = data.documentText; }
         if (data.source) setFileName(data.source);
         if (data.annotations) {
           setAnnotations(data.annotations.map(a => ({
@@ -1108,7 +1113,7 @@ export default function Annotator() {
         {/* Document pane */}
         <div ref={docPaneRef} style={{ flex: 1, overflowY: "auto", padding: 24, position: "relative" }}>
           {mode === "edit" ? (
-            <textarea value={doc} onChange={e => { setDoc(e.target.value); setAnnotations([]); }}
+            <textarea value={doc} onChange={e => setDoc(e.target.value)}
               placeholder="Paste your document text here, or upload a file (PDF, DOCX, EPUB, HTML, TXT, MD, RTF, CSV)…"
               style={{ width: "100%", height: "100%", minHeight: 400, padding: 20, fontFamily: FONT, fontSize: 15, lineHeight: 1.75, border: "1px solid #d4d0c8", borderRadius: 10, resize: "none", background: "#fff", color: "#1a1a1a", outline: "none", boxSizing: "border-box" }} />
           ) : (

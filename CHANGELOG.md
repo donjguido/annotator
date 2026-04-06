@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `/link` slash command: type `/link` to browse and search annotations to link, with optional text/name filter (e.g. `/link foo`); uses the same picker as `@#` with Enter/Tab/Escape controls
 - Annotation mention autocomplete: typing `@#` in chat shows a dropdown of annotations to link, navigable with arrow keys, Enter to select, Tab to select with context (+), Escape to dismiss
 - Multi-format document upload: PDF, DOCX, EPUB, HTML, RTF, TXT, Markdown, CSV, and more
 - Text extraction for DOCX files via mammoth.js

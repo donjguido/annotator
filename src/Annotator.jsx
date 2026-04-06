@@ -13,11 +13,11 @@ const MONO = `'JetBrains Mono', 'Fira Code', monospace`;
 
 const HINTS = [
   "Select text in the document to create a highlight",
-  "Type /skip to leave a comment without asking Claude",
+  "Type /skip to leave a comment without asking the AI",
   "Type /search to ask Claude with web search enabled",
   "Type /find to search within the document text",
   "Type /ctx to include full document context for one prompt",
-  "Type @#N to link to annotation N (links survive reordering)",
+  "Type /link or @#N to link to another annotation",
   "Use @#N+ to link and import another annotation as context",
   "Type /attach to add a file as extra context for this thread",
   "Export as JSON, then re-import to pick up where you left off",
@@ -377,6 +377,15 @@ export default function Annotator() {
   const attachTargetRef = useRef(null);
   const editRef = useRef(null);
   const preEditRef = useRef({ start: 0, end: 0 });
+
+  // Warn before unload if there's data that could be lost
+  useEffect(() => {
+    const handler = (e) => {
+      if (doc || annotations.length) { e.preventDefault(); }
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [doc, annotations.length]);
 
   // Prevent edits within annotated regions in the edit textarea
   useEffect(() => {
@@ -954,27 +963,32 @@ export default function Annotator() {
     { cmd: "/find", desc: "search in document" },
     { cmd: "/ctx", desc: "ask with full doc context" },
     { cmd: "/attach", desc: "attach a file as context" },
+    { cmd: "/link", desc: "link to another annotation" },
   ];
 
   const getAnnoLabel = (a, i) => a.name || `#${i + 1}`;
 
-  // Annotation mention autocomplete: detect @# pattern at cursor
+  // Annotation mention autocomplete: detect @# or /link pattern at cursor
   const getAnnoMention = () => {
     const el = inputRef.current;
     if (!el || annotations.length === 0) return null;
     const pos = el.selectionStart;
     const before = inputText.slice(0, pos);
-    const match = before.match(/@#(\d*)(\+)?$/);
+    // Match @#N(+)? or /link (with optional query after space)
+    const match = before.match(/@#(\d*)(\+)?$/) || before.match(/^\/link(?:\s+(.*))?$/);
     if (!match) return null;
-    const query = match[1]; // digits typed so far (may be empty)
-    const startPos = before.length - match[0].length;
+    const isLinkCmd = before.startsWith("/link");
+    const query = isLinkCmd ? (match[1] || "").trim() : match[1];
+    const startPos = isLinkCmd ? 0 : before.length - match[0].length;
     const filtered = annotations.map((a, i) => ({ anno: a, idx: i, label: getAnnoLabel(a, i) }))
       .filter(item => item.anno.id !== (currentAnno?.id ?? null)) // exclude current annotation
       .filter(item => {
         if (!query) return true;
+        const q = query.toLowerCase();
         const num = String(item.idx + 1);
         const name = (item.anno.name || "").toLowerCase();
-        return num.startsWith(query) || name.includes(query.toLowerCase());
+        const text = item.anno.text.toLowerCase();
+        return num.startsWith(query) || name.includes(q) || (isLinkCmd && text.includes(q));
       });
     return filtered.length > 0 ? { items: filtered, startPos, fullMatch: match[0] } : null;
   };
@@ -989,7 +1003,9 @@ export default function Annotator() {
     const mention = annoMention;
     if (!mention) return;
     const replacement = `@#${item.idx + 1}${plus ? "+" : ""} `;
-    const newText = inputText.slice(0, mention.startPos) + replacement + inputText.slice(inputRef.current?.selectionStart ?? inputText.length);
+    // For /link command, replace entire input; for @# inline, replace just the match
+    const afterPos = mention.startPos === 0 && inputText.startsWith("/link") ? inputText.length : (inputRef.current?.selectionStart ?? inputText.length);
+    const newText = inputText.slice(0, mention.startPos) + replacement + inputText.slice(afterPos);
     setInputText(newText);
     setTimeout(() => {
       if (inputRef.current) {
@@ -1287,7 +1303,7 @@ export default function Annotator() {
 
             {currentAnno ? (() => {
               const c = COLORS[currentAnno.color];
-              const showCmdHints = inputText.startsWith("/");
+              const showCmdHints = inputText.startsWith("/") && !annoMention;
               const annoIdx = annotations.indexOf(currentAnno);
               return (
                 <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>

@@ -1349,7 +1349,7 @@ export default function Annotator() {
                       <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
                         <AutoTextarea inputRef={inputRef} value={inputText} onChange={e => setInputText(e.target.value)}
                           onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); } }}
-                          placeholder={currentThread.length ? "Follow up, /ctx, /skip, /search, /find, /attach, @#N…" : "Ask about this passage… (/ctx for full doc)"} />
+                          placeholder="" />
                         <button onClick={() => sendMessage(currentAnno.id)}
                           disabled={!inputText.trim() || loadingId === currentAnno.id}
                           style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: inputText.trim() ? c.border : "#ddd", color: "#fff", fontFamily: MONO, fontSize: 12, cursor: inputText.trim() ? "pointer" : "default", transition: "all 0.15s", flexShrink: 0, marginBottom: 1 }}>↵</button>

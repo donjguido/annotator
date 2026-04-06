@@ -1,17 +1,17 @@
 # Annotator
 
-AI-powered document annotation tool. Highlight passages in any text or PDF, then ask Claude questions about them in threaded conversations.
+AI-powered document annotation tool. Highlight passages in any text or PDF, then ask AI questions about them in threaded conversations. Bring your own provider — works with Anthropic, OpenAI, Google Gemini, OpenRouter, Ollama, or any OpenAI-compatible endpoint.
 
-![React](https://img.shields.io/badge/React-19-blue) ![Vite](https://img.shields.io/badge/Vite-6-purple) ![Claude API](https://img.shields.io/badge/Claude-Sonnet_4-orange)
+![React](https://img.shields.io/badge/React-19-blue) ![Vite](https://img.shields.io/badge/Vite-6-purple) ![Multi--Provider AI](https://img.shields.io/badge/AI-Multi--Provider-orange)
 
 ## Features
 
-- **Highlight & Ask** — Select any passage to create a color-coded annotation, then ask Claude about it
+- **Highlight & Ask** — Select any passage to create a color-coded annotation, then ask AI about it
 - **Overlapping Highlights** — Highlights can overlap; click overlapping text to pick which annotation to view
 - **Branching Edits** — Edit a user message and choose "Branch + Regen" to save the old thread as a branch and get a fresh AI response. Switch between branches with the tab bar. Plain "Save" edits in place without branching
 - **Per-prompt Context** — Use `/ctx your question` to include full document context for that specific prompt. Without it, only the highlighted passage is sent
-- **Annotation Linking** — Type `@#N` in any message to create a clickable link to annotation N (e.g. `@#3`). Links show the annotation name if one is set. Use `@#N+` to link *and* import that annotation's text and recent conversation as context for Claude
-- **File Attachments** — Type `/attach` to add a file as extra context for an annotation thread. Attached file contents are sent to Claude with each prompt
+- **Annotation Linking** — Type `@#N` in any message to create a clickable link to annotation N (e.g. `@#3`). Links show the annotation name if one is set. Use `@#N+` to link *and* import that annotation's text and recent conversation as context
+- **File Attachments** — Type `/attach` to add a file as extra context for an annotation thread. Attached file contents are sent to the AI with each prompt
 - **Jump to Highlight** — Click the locate button (⎈) next to the highlighted passage in the sidebar to scroll the document to that highlight
 - **Scroll Position Memory** — Switching between Edit and Annotate modes preserves your scroll position in each
 - **Rename Annotations** — Double-click the annotation name in the sidebar header to give it a custom name
@@ -19,8 +19,8 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
 - **Threaded Conversations** — Each highlight has its own chat thread
 - **Slash Commands**
   - `/ctx` — Include full document context for this prompt
-  - `/skip` — Leave a comment without calling Claude
-  - `/search` — Ask Claude with web search enabled
+  - `/skip` — Leave a comment without calling the AI
+  - `/search` — Ask with web search enabled (Anthropic only)
   - `/find` — Search within the document text
   - `/attach` — Attach a file as context for this annotation
 - **Multi-color Highlights** — 5 color options (Lemon, Rose, Sky, Mint, Lilac) with per-annotation color switching
@@ -76,9 +76,10 @@ Open [http://localhost:5173](http://localhost:5173).
 ## Tech Stack
 
 - [React 19](https://react.dev) + [Vite 6](https://vite.dev)
-- [Claude API](https://docs.anthropic.com/en/docs/about-claude/models) (Sonnet 4)
+- Multi-provider AI — [Anthropic](https://docs.anthropic.com/en/docs/about-claude/models), [OpenAI](https://platform.openai.com/docs), [Google Gemini](https://ai.google.dev/), [OpenRouter](https://openrouter.ai/), [Ollama](https://ollama.com/) (local), or any OpenAI-compatible endpoint
 - [PDF.js](https://mozilla.github.io/pdf.js/) for PDF text extraction
 - [Literata](https://fonts.google.com/specimen/Literata) + [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) fonts
+- No backend — all API calls made directly from the browser; settings in `localStorage`
 
 ## License
 

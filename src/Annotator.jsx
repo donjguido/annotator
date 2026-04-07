@@ -180,17 +180,20 @@ function matchesHotkey(e, hk) {
 
 const IS_DEPLOYED = !["localhost", "127.0.0.1"].includes(window.location.hostname);
 
-async function aiFetch(url, options) {
+async function aiFetch(url, options, { useSharedKey: shared, provider } = {}) {
   if (!IS_DEPLOYED) return fetch(url, options);
+  const payload = { url, headers: options.headers, body: JSON.parse(options.body) };
+  if (shared) { payload.useSharedKey = true; payload.provider = provider; }
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, headers: options.headers, body: JSON.parse(options.body) }),
+    credentials: "include",
+    body: JSON.stringify(payload),
   });
   return res;
 }
 
-async function callAnthropic(apiKey, model, messages, system, useWebSearch) {
+async function callAnthropic(apiKey, model, messages, system, useWebSearch, fetchOpts = {}) {
   const body = { model, max_tokens: 1000, system, messages };
   if (useWebSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
   const headers = {
@@ -203,13 +206,13 @@ async function callAnthropic(apiKey, model, messages, system, useWebSearch) {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-  });
+  }, fetchOpts);
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
   return data.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "No response.";
 }
 
-async function callOpenAICompat(baseUrl, apiKey, model, messages, system) {
+async function callOpenAICompat(baseUrl, apiKey, model, messages, system, fetchOpts = {}) {
   const allMessages = [{ role: "system", content: system }, ...messages];
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
@@ -217,13 +220,13 @@ async function callOpenAICompat(baseUrl, apiKey, model, messages, system) {
     method: "POST",
     headers,
     body: JSON.stringify({ model, messages: allMessages, max_tokens: 1000 }),
-  });
+  }, fetchOpts);
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
   return data.choices?.[0]?.message?.content || "No response.";
 }
 
-async function callGemini(apiKey, model, messages, system) {
+async function callGemini(apiKey, model, messages, system, fetchOpts = {}) {
   const contents = messages.map(m => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
@@ -238,14 +241,15 @@ async function callGemini(apiKey, model, messages, system) {
         contents,
         generationConfig: { maxOutputTokens: 1000 },
       }),
-    }
+    },
+    fetchOpts,
   );
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
   return data.candidates?.[0]?.content?.parts?.map(p => p.text).join("\n") || "No response.";
 }
 
-async function callAI(settings, { messages, highlightedText, fullDoc, useContext, useWebSearch, linkedContext, attachments }) {
+async function callAI(settings, { messages, highlightedText, fullDoc, useContext, useWebSearch, linkedContext, attachments }, sharedKeyOpts) {
   if (!settings?.provider) throw new Error("No AI provider configured — open Settings (gear icon) to set up.");
 
   const ctx = useContext ? (fullDoc.length > 6000 ? fullDoc.slice(0, 6000) + "\n…[truncated]" : fullDoc) : "";
@@ -260,15 +264,16 @@ async function callAI(settings, { messages, highlightedText, fullDoc, useContext
 
   const { provider, apiKey, model, baseUrl } = settings;
   const prov = PROVIDERS.find(p => p.id === provider);
+  const fetchOpts = sharedKeyOpts ? { useSharedKey: true, provider } : {};
 
-  if (provider === "anthropic") return callAnthropic(apiKey, model, messages, system, useWebSearch && prov?.supportsSearch);
-  if (provider === "google") return callGemini(apiKey, model, messages, system);
+  if (provider === "anthropic") return callAnthropic(apiKey, model, messages, system, useWebSearch && prov?.supportsSearch, fetchOpts);
+  if (provider === "google") return callGemini(apiKey, model, messages, system, fetchOpts);
 
   // OpenAI, OpenRouter, Ollama, Custom — all OpenAI-compatible
   const url = provider === "openai" ? "https://api.openai.com"
     : provider === "openrouter" ? "https://openrouter.ai/api"
     : baseUrl || prov?.defaultUrl || "http://localhost:11434";
-  return callOpenAICompat(url, apiKey, model, messages, system);
+  return callOpenAICompat(url, apiKey, model, messages, system, fetchOpts);
 }
 
 function downloadFile(content, filename, mime) {
@@ -845,7 +850,7 @@ export default function Annotator() {
     const attachments = anno.attachments || [];
 
     try {
-      const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch, linkedContext: linked, attachments });
+      const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch, linkedContext: linked, attachments }, useSharedKey ? { useSharedKey: true } : undefined);
       const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
       const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
       setAnnotations(prev => prev.map(a => a.id === id ? appendToThread(a, sentBranch, aiMsg) : a));
@@ -897,7 +902,7 @@ export default function Annotator() {
       if (apiMessages.length > 0 && apiMessages[0].role !== "user") apiMessages.shift();
 
       try {
-        const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: editedMsg.withContext || false, useWebSearch: false });
+        const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: editedMsg.withContext || false, useWebSearch: false }, useSharedKey ? { useSharedKey: true } : undefined);
         const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
         const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
         setAnnotations(prev => prev.map(a => a.id === annoId ? appendToThread(a, -1, aiMsg) : a));

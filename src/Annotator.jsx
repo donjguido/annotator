@@ -799,18 +799,25 @@ export default function Annotator() {
       if (a.id !== annoId) return a;
       if (branchIdx === a.activeBranch) return a;
 
+      // Save current thread back to its source before switching
+      let updated = a;
+      if (a.activeBranch >= 0) {
+        const newBranches = [...a.branches];
+        newBranches[a.activeBranch] = { ...newBranches[a.activeBranch], thread: a.thread };
+        updated = { ...updated, branches: newBranches };
+      }
+
       // If currently viewing main thread and switching to a branch
       if (a.activeBranch === -1 && branchIdx >= 0) {
-        // Save current thread as a temporary "main" snapshot and load the branch
-        return { ...a, _savedMain: a.thread, thread: a.branches[branchIdx].thread, activeBranch: branchIdx };
+        return { ...updated, _savedMain: a.thread, thread: updated.branches[branchIdx].thread, activeBranch: branchIdx };
       }
       // If currently viewing a branch and switching to main
       if (a.activeBranch >= 0 && branchIdx === -1) {
-        return { ...a, thread: a._savedMain || a.thread, _savedMain: undefined, activeBranch: -1 };
+        return { ...updated, thread: a._savedMain || a.thread, _savedMain: undefined, activeBranch: -1 };
       }
       // Switching between branches
       if (a.activeBranch >= 0 && branchIdx >= 0) {
-        return { ...a, thread: a.branches[branchIdx].thread, activeBranch: branchIdx };
+        return { ...updated, thread: updated.branches[branchIdx].thread, activeBranch: branchIdx };
       }
       return a;
     }));
@@ -1505,7 +1512,7 @@ export default function Annotator() {
                   <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
                     {isViewingBranch && (
                       <div style={{ padding: "4px 8px", background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 6, fontSize: 10, fontFamily: MONO, textAlign: "center", opacity: 0.7 }}>
-                        Viewing saved branch v{currentAnno.activeBranch + 1} (read-only)
+                        Viewing branch v{currentAnno.activeBranch + 1}
                       </div>
                     )}
                     {currentThread.length === 0 && loadingId !== currentAnno.id && (
@@ -1553,8 +1560,7 @@ export default function Annotator() {
                               <p style={{ fontSize: 13, margin: 0, lineHeight: 1.6 }}>
                                 <MessageContent content={msg.content} annotations={annotations} onNavigate={(id) => { setSelectedId(id); setInputText(""); }} />
                               </p>
-                              {!isViewingBranch && (
-                                <div style={{ display: "flex", gap: 4, marginTop: 5 }}>
+                              <div style={{ display: "flex", gap: 4, marginTop: 5 }}>
                                   <button onClick={() => { setEditingNote({ annoId: currentAnno.id, msgIdx: idx }); setEditText(msg.content); }}
                                     style={{ padding: "1px 6px", borderRadius: 3, border: "none", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer", opacity: 0.2, transition: "opacity 0.15s" }}
                                     onMouseEnter={e => e.target.style.opacity = 0.6} onMouseLeave={e => e.target.style.opacity = 0.2}>edit</button>
@@ -1562,7 +1568,6 @@ export default function Annotator() {
                                     style={{ padding: "1px 6px", borderRadius: 3, border: "none", background: "transparent", fontSize: 10, fontFamily: MONO, cursor: "pointer", opacity: 0.2, color: "#b91c1c", transition: "opacity 0.15s" }}
                                     onMouseEnter={e => e.target.style.opacity = 0.6} onMouseLeave={e => e.target.style.opacity = 0.2}>delete</button>
                                 </div>
-                              )}
                             </div>
                           )}
                         </div>
@@ -1578,7 +1583,7 @@ export default function Annotator() {
                   </div>
 
                   {/* Command hints */}
-                  {!isViewingBranch && showCmdHints && filteredCmds.length > 0 && (
+                  {showCmdHints && filteredCmds.length > 0 && (
                     <div style={{ padding: "6px 16px", borderTop: "1px solid #f0ede8", background: "#faf9f6", flexShrink: 0 }}>
                       <div style={{ fontSize: 10, fontFamily: MONO, opacity: 0.35, marginBottom: 4 }}>↑↓ navigate · ↵/Tab select</div>
                       {filteredCmds.map((h, i) => (
@@ -1593,7 +1598,7 @@ export default function Annotator() {
                   )}
 
                   {/* Annotation mention autocomplete */}
-                  {!isViewingBranch && annoMention && (
+                  {annoMention && (
                     <div style={{ padding: "6px 16px", borderTop: "1px solid #f0ede8", background: "#faf9f6", flexShrink: 0, maxHeight: 160, overflowY: "auto" }}>
                       <div style={{ fontSize: 10, fontFamily: MONO, opacity: 0.35, marginBottom: 4 }}>Link annotation — ↵ select · Tab select with context (+) · Esc dismiss</div>
                       {annoMention.items.map((item, i) => {
@@ -1618,35 +1623,33 @@ export default function Annotator() {
                     </div>
                   )}
 
-                  {/* Input (hidden when viewing a branch) */}
-                  {!isViewingBranch && (
-                    <div style={{ padding: "10px 16px 14px", borderTop: "1px solid #e5e2db", flexShrink: 0 }}>
-                      <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
-                        <AutoTextarea inputRef={inputRef} value={inputText} onChange={e => setInputText(e.target.value)}
-                          onKeyDown={e => {
-                            if (annoMention) {
-                              const items = annoMention.items;
-                              if (e.key === "ArrowDown") { e.preventDefault(); setAnnoMentionIdx(i => (i + 1) % items.length); }
-                              else if (e.key === "ArrowUp") { e.preventDefault(); setAnnoMentionIdx(i => (i - 1 + items.length) % items.length); }
-                              else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); insertAnnoMention(items[annoMentionIdx]); }
-                              else if (e.key === "Tab") { e.preventDefault(); insertAnnoMention(items[annoMentionIdx], true); }
-                              else if (e.key === "Escape") { e.preventDefault(); setInputText(inputText.slice(0, annoMention.startPos) + inputText.slice(annoMention.startPos + annoMention.fullMatch.length)); }
-                              return;
-                            }
-                            if (showCmdHints && filteredCmds.length > 0) {
-                              if (e.key === "ArrowDown") { e.preventDefault(); setCmdHintIdx(i => (i + 1) % filteredCmds.length); return; }
-                              if (e.key === "ArrowUp") { e.preventDefault(); setCmdHintIdx(i => (i - 1 + filteredCmds.length) % filteredCmds.length); return; }
-                              if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) { e.preventDefault(); setInputText(filteredCmds[cmdHintIdx].cmd + " "); inputRef.current?.focus(); return; }
-                            }
-                            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); }
-                          }}
-                          placeholder="" />
-                        <button onClick={() => sendMessage(currentAnno.id)}
-                          disabled={!inputText.trim() || loadingId === currentAnno.id}
-                          style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: inputText.trim() ? c.border : "#ddd", color: "#fff", fontFamily: MONO, fontSize: 12, cursor: inputText.trim() ? "pointer" : "default", transition: "all 0.15s", flexShrink: 0, marginBottom: 1 }}>↵</button>
-                      </div>
+                  {/* Input */}
+                  <div style={{ padding: "10px 16px 14px", borderTop: "1px solid #e5e2db", flexShrink: 0 }}>
+                    <div style={{ display: "flex", gap: 6, alignItems: "flex-end" }}>
+                      <AutoTextarea inputRef={inputRef} value={inputText} onChange={e => setInputText(e.target.value)}
+                        onKeyDown={e => {
+                          if (annoMention) {
+                            const items = annoMention.items;
+                            if (e.key === "ArrowDown") { e.preventDefault(); setAnnoMentionIdx(i => (i + 1) % items.length); }
+                            else if (e.key === "ArrowUp") { e.preventDefault(); setAnnoMentionIdx(i => (i - 1 + items.length) % items.length); }
+                            else if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); insertAnnoMention(items[annoMentionIdx]); }
+                            else if (e.key === "Tab") { e.preventDefault(); insertAnnoMention(items[annoMentionIdx], true); }
+                            else if (e.key === "Escape") { e.preventDefault(); setInputText(inputText.slice(0, annoMention.startPos) + inputText.slice(annoMention.startPos + annoMention.fullMatch.length)); }
+                            return;
+                          }
+                          if (showCmdHints && filteredCmds.length > 0) {
+                            if (e.key === "ArrowDown") { e.preventDefault(); setCmdHintIdx(i => (i + 1) % filteredCmds.length); return; }
+                            if (e.key === "ArrowUp") { e.preventDefault(); setCmdHintIdx(i => (i - 1 + filteredCmds.length) % filteredCmds.length); return; }
+                            if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) { e.preventDefault(); setInputText(filteredCmds[cmdHintIdx].cmd + " "); inputRef.current?.focus(); return; }
+                          }
+                          if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); }
+                        }}
+                        placeholder="" />
+                      <button onClick={() => sendMessage(currentAnno.id)}
+                        disabled={!inputText.trim() || loadingId === currentAnno.id}
+                        style={{ padding: "8px 14px", borderRadius: 8, border: "none", background: inputText.trim() ? c.border : "#ddd", color: "#fff", fontFamily: MONO, fontSize: 12, cursor: inputText.trim() ? "pointer" : "default", transition: "all 0.15s", flexShrink: 0, marginBottom: 1 }}>↵</button>
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })() : (

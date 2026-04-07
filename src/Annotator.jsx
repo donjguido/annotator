@@ -677,11 +677,28 @@ export default function Annotator() {
       : a));
   };
 
+  // Helper: append a message to the correct thread (main or branch) regardless of current view
+  const appendToThread = (a, branchIdx, msg) => {
+    if (a.activeBranch === branchIdx) {
+      // Still viewing the same branch — append to active thread
+      return { ...a, thread: [...a.thread, msg] };
+    }
+    if (branchIdx === -1) {
+      // Message was sent on main, but we switched to a branch — append to saved main
+      return { ...a, _savedMain: [...(a._savedMain || a.thread), msg] };
+    }
+    // Message was sent on a branch, but we switched away — append to that branch's data
+    const newBranches = [...a.branches];
+    newBranches[branchIdx] = { ...newBranches[branchIdx], thread: [...newBranches[branchIdx].thread, msg] };
+    return { ...a, branches: newBranches };
+  };
+
   const sendMessage = async (id) => {
     const anno = annotations.find(a => a.id === id);
     if (!anno || !inputText.trim()) return;
     const parsed = parseCommand(inputText);
     const ts = new Date().toISOString();
+    const sentBranch = anno.activeBranch; // capture which branch we're on at send time
 
     if (parsed.type === "skip") {
       const comment = parsed.content;
@@ -727,13 +744,11 @@ export default function Annotator() {
     try {
       const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch, linkedContext: linked, attachments });
       const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
-      setAnnotations(prev => prev.map(a => a.id === id
-        ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() }] }
-        : a));
+      const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
+      setAnnotations(prev => prev.map(a => a.id === id ? appendToThread(a, sentBranch, aiMsg) : a));
     } catch (err) {
-      setAnnotations(prev => prev.map(a => a.id === id
-        ? { ...a, thread: [...a.thread, { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString() }] }
-        : a));
+      const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString() };
+      setAnnotations(prev => prev.map(a => a.id === id ? appendToThread(a, sentBranch, errMsg) : a));
     }
     setLoadingId(null);
   };
@@ -781,13 +796,11 @@ export default function Annotator() {
       try {
         const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: editedMsg.withContext || false, useWebSearch: false });
         const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
-        setAnnotations(prev => prev.map(a => a.id === annoId
-          ? { ...a, thread: [...a.thread, { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() }] }
-          : a));
+        const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
+        setAnnotations(prev => prev.map(a => a.id === annoId ? appendToThread(a, -1, aiMsg) : a));
       } catch (err) {
-        setAnnotations(prev => prev.map(a => a.id === annoId
-          ? { ...a, thread: [...a.thread, { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString() }] }
-          : a));
+        const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString() };
+        setAnnotations(prev => prev.map(a => a.id === annoId ? appendToThread(a, -1, errMsg) : a));
       }
       setLoadingId(null);
     }
@@ -1640,7 +1653,7 @@ export default function Annotator() {
                           if (showCmdHints && filteredCmds.length > 0) {
                             if (e.key === "ArrowDown") { e.preventDefault(); setCmdHintIdx(i => (i + 1) % filteredCmds.length); return; }
                             if (e.key === "ArrowUp") { e.preventDefault(); setCmdHintIdx(i => (i - 1 + filteredCmds.length) % filteredCmds.length); return; }
-                            if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) { e.preventDefault(); setInputText(filteredCmds[cmdHintIdx].cmd + " "); inputRef.current?.focus(); return; }
+                            if (e.key === "Tab" && !e.shiftKey) { e.preventDefault(); setInputText(filteredCmds[cmdHintIdx].cmd + " "); inputRef.current?.focus(); return; }
                           }
                           if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); }
                         }}

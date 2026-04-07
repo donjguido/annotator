@@ -1359,8 +1359,8 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
           </a>
           <a href="https://ko-fi.com/donjguido" target="_blank" rel="noopener noreferrer"
             title="Support on Ko-fi"
-            style={{ padding: "5px 8px", borderRadius: 7, border: "1px solid #d4d0c8", display: "flex", alignItems: "center", gap: 4, color: "#1a1a1a", textDecoration: "none", lineHeight: 1, fontFamily: MONO, fontSize: 10, opacity: 0.55 }}>
-            ☕ Sponsor
+            style={{ padding: "5px 8px", borderRadius: 7, border: "1px solid #d4d0c8", display: "flex", alignItems: "center", color: "#1a1a1a", textDecoration: "none", lineHeight: 1 }}>
+            🍩
           </a>
           <a href="https://github.com/donjguido/annotator" target="_blank" rel="noopener noreferrer"
             title="View on GitHub"

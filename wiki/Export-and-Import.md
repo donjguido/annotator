@@ -1,5 +1,7 @@
 # Export & Import
 
+![Export options](https://raw.githubusercontent.com/donjguido/annotator/master/assets/export_options.png)
+
 Annotator supports multiple ways to export your annotations and conversations, plus a JSON round-trip for saving and restoring sessions.
 
 Open the **Export menu** from the header (or press `Ctrl+Shift+E`).

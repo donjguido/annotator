@@ -31,6 +31,8 @@ Open [http://localhost:5173](http://localhost:5173).
 
 ## First steps
 
+![Importing a document](https://raw.githubusercontent.com/donjguido/annotator/master/assets/document_import.gif)
+
 1. **Load a document** — Paste text into the editor, or click **Upload** to import a PDF, DOCX, or EPUB
 2. **Switch to Annotate mode** — Click the toggle in the header
 3. **Highlight text** — Select any passage to create a color-coded annotation

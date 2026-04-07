@@ -23,6 +23,8 @@ Welcome to the Annotator wiki — the companion guide for the open-source, AI-po
 
 ## What is Annotator?
 
+![Highlight and chat with AI](https://raw.githubusercontent.com/donjguido/annotator/master/assets/hero.gif)
+
 Annotator lets you highlight passages in any text or PDF, then have AI-powered conversations about them. Each highlight gets its own chat thread. You bring your own AI provider — Anthropic, OpenAI, Google Gemini, OpenRouter, Ollama, or any OpenAI-compatible endpoint.
 
 Everything runs in the browser. Your API keys and settings stay in `localStorage` and are never sent to our servers.

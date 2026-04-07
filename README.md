@@ -4,6 +4,8 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
 
 ![React](https://img.shields.io/badge/React-19-blue) ![Vite](https://img.shields.io/badge/Vite-6-purple) ![Multi--Provider AI](https://img.shields.io/badge/AI-Multi--Provider-orange)
 
+![Highlight and chat with AI](assets/hero.gif)
+
 ## Try it live
 
 **[annotator-ten.vercel.app](https://annotator-ten.vercel.app)**
@@ -11,6 +13,8 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
 No install required — just open the link, pick your AI provider in Settings, paste your API key, and start annotating. Your settings and API key stay in your browser's `localStorage` and are never sent to our servers.
 
 ## Features
+
+![Annotator workspace with highlights and AI sidebar](assets/use_display.png)
 
 - **Highlight & Ask** — Select any passage to create a color-coded annotation, then ask AI about it
 - **Overlapping Highlights** — Highlights can overlap; click overlapping text to pick which annotation to view
@@ -51,11 +55,15 @@ On first launch, the app opens a **Settings** panel (gear icon in the header) wh
 | **Ollama (local)** | Not needed | Runs on `localhost:11434` — no internet required |
 | **Custom (OpenAI-compatible)** | Optional | Any OpenAI-compatible endpoint (LM Studio, vLLM, llama.cpp, etc.) |
 
+![Provider settings panel](assets/provider_settings.png)
+
 Settings are saved to `localStorage` — you only configure once per browser.
 
 > **Local models (Ollama, Custom):** These don't need an API key or internet access. Just make sure your local model server is running before using the app. Web search (`/search`) is unavailable with local models.
 
 ## Usage
+
+![Importing a document](assets/document_import.gif)
 
 1. **Paste or upload** — Paste text in Edit mode or upload a PDF
 2. **Switch to Annotate** — Click the Annotate toggle
@@ -66,6 +74,8 @@ Settings are saved to `localStorage` — you only configure once per browser.
 7. **Attach files** — Type `/attach` to add reference files to an annotation thread
 8. **Branch** — Edit a message and click "Branch + Regen" to explore alternate responses
 9. **Export** — Use the Export menu to save your work
+
+![Export options](assets/export_options.png)
 
 ## Tech Stack
 

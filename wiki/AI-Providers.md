@@ -1,5 +1,7 @@
 # AI Providers
 
+![Provider settings panel](https://raw.githubusercontent.com/donjguido/annotator/master/assets/provider_settings.png)
+
 Annotator supports multiple AI providers. Pick the one that fits your needs — all configuration happens in the Settings panel (gear icon).
 
 ---

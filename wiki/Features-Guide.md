@@ -1,5 +1,7 @@
 # Features Guide
 
+![Annotator workspace with highlights and AI sidebar](https://raw.githubusercontent.com/donjguido/annotator/master/assets/use_display.png)
+
 A detailed look at everything Annotator can do.
 
 ---

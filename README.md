@@ -4,6 +4,12 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
 
 ![React](https://img.shields.io/badge/React-19-blue) ![Vite](https://img.shields.io/badge/Vite-6-purple) ![Multi--Provider AI](https://img.shields.io/badge/AI-Multi--Provider-orange)
 
+## Try it live
+
+**[annotator-ten.vercel.app](https://annotator-ten.vercel.app)**
+
+No install required — just open the link, pick your AI provider in Settings, paste your API key, and start annotating. Your settings and API key stay in your browser's `localStorage` and are never sent to our servers.
+
 ## Features
 
 - **Highlight & Ask** — Select any passage to create a color-coded annotation, then ask AI about it
@@ -24,17 +30,13 @@ AI-powered document annotation tool. Highlight passages in any text or PDF, then
   - `/find` — Search within the document text
   - `/attach` — Attach a file as context for this annotation
 - **Multi-color Highlights** — 5 color options (Lemon, Rose, Sky, Mint, Lilac) with per-annotation color switching
-- **Export** — Copy to clipboard, download as Markdown, or download as JSON
+- **Export** — Copy to clipboard, download as Markdown, HTML, CSV, or JSON
 - **Import/Export JSON** — Save your session (including branches) and pick up where you left off
 - **Usernames** — Set your name for tracked annotations across collaborators
 
 ## Setup
 
-```bash
-git clone https://github.com/donjguido/annotator.git
-cd annotator
-npm install
-```
+The easiest way to get started is the [live site](https://annotator-ten.vercel.app). To run locally, see [Running locally](#running-locally) below.
 
 ### AI Provider
 
@@ -52,14 +54,6 @@ On first launch, the app opens a **Settings** panel (gear icon in the header) wh
 Settings are saved to `localStorage` — you only configure once per browser.
 
 > **Local models (Ollama, Custom):** These don't need an API key or internet access. Just make sure your local model server is running before using the app. Web search (`/search`) is unavailable with local models.
-
-### Run
-
-```bash
-npm run dev
-```
-
-Open [http://localhost:5173](http://localhost:5173).
 
 ## Usage
 
@@ -80,6 +74,23 @@ Open [http://localhost:5173](http://localhost:5173).
 - [PDF.js](https://mozilla.github.io/pdf.js/) for PDF text extraction
 - [Literata](https://fonts.google.com/specimen/Literata) + [JetBrains Mono](https://fonts.google.com/specimen/JetBrains+Mono) fonts
 - No backend — all API calls made directly from the browser; settings in `localStorage`
+
+## Running locally
+
+If you prefer to run Annotator on your own machine (required for Ollama or other local models):
+
+```bash
+git clone https://github.com/donjguido/annotator.git
+cd annotator
+npm install
+npm run dev
+```
+
+Then open [http://localhost:5173](http://localhost:5173).
+
+## Feedback
+
+Have ideas, feature requests, or found a bug? We'd love to hear from you — please open a thread in [GitHub Discussions](https://github.com/donjguido/annotator/discussions). It's the best way to share feedback, ask questions, or suggest improvements.
 
 ## License
 

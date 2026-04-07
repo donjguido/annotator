@@ -1400,6 +1400,23 @@ export default function Annotator() {
               <button onClick={() => setShowSettings(false)} style={{ border: "none", background: "transparent", fontSize: 16, cursor: "pointer", opacity: 0.4 }}>✕</button>
             </div>
 
+            {currentUser && IS_DEPLOYED && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #f0ede8", marginBottom: 12 }}>
+                <label style={{ fontFamily: MONO, fontSize: 11, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input type="checkbox" checked={useSharedKey || false} onChange={e => {
+                    setUseSharedKey(e.target.checked);
+                    localStorage.setItem("annotator_use_shared_key", JSON.stringify(e.target.checked));
+                  }} />
+                  Use shared AI key (no API key needed)
+                </label>
+                {useSharedKey && usageInfo && (
+                  <span style={{ fontFamily: MONO, fontSize: 10, opacity: 0.6 }}>
+                    {usageInfo.tier === "paid" ? "Pro" : `${usageInfo.dailyRemaining}/${usageInfo.dailyLimit} free`}
+                  </span>
+                )}
+              </div>
+            )}
+
             <label style={{ display: "block", fontSize: 11, fontFamily: MONO, opacity: 0.5, marginBottom: 4, textTransform: "uppercase" }}>Provider</label>
             <select value={settingsDraft.provider} onChange={e => {
               const p = PROVIDERS.find(x => x.id === e.target.value);
@@ -1410,7 +1427,7 @@ export default function Annotator() {
               {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
 
-            {PROVIDERS.find(p => p.id === settingsDraft.provider)?.needsKey && (
+            {(!useSharedKey || !currentUser) && PROVIDERS.find(p => p.id === settingsDraft.provider)?.needsKey && (
               <>
                 <label style={{ display: "block", fontSize: 11, fontFamily: MONO, opacity: 0.5, marginBottom: 4, textTransform: "uppercase" }}>API Key</label>
                 <input type="password" value={settingsDraft.apiKey || ""} onChange={e => { setSettingsDraft(prev => ({ ...prev, apiKey: e.target.value })); setSettingsStatus(""); }}
@@ -1926,6 +1943,44 @@ export default function Annotator() {
           </div>
         )}
       </div>
+
+      {/* Upgrade modal */}
+      {showUpgradeModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000 }}
+          onClick={() => setShowUpgradeModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 28, maxWidth: 420, width: "90%", fontFamily: FONT }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h2 style={{ margin: 0, fontSize: 18 }}>Upgrade</h2>
+              <button onClick={() => setShowUpgradeModal(false)} style={{ border: "none", background: "transparent", fontSize: 16, cursor: "pointer", opacity: 0.4 }}>✕</button>
+            </div>
+            <div style={{ border: "1px solid #e5e2dc", borderRadius: 8, padding: 16, marginBottom: 12 }}>
+              <h3 style={{ margin: "0 0 6px", fontSize: 14, fontFamily: MONO }}>Pro Plan</h3>
+              <p style={{ margin: "0 0 10px", fontSize: 13, opacity: 0.7 }}>Premium AI models, higher daily limits</p>
+              <button onClick={async () => {
+                const r = await fetch("/api/stripe/checkout", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "subscription" }) });
+                const { url } = await r.json();
+                if (url) window.location.href = url;
+              }}
+                style={{ width: "100%", padding: "10px", borderRadius: 7, border: "none", background: "#1a1a1a", color: "#fff", cursor: "pointer", fontFamily: MONO, fontSize: 12 }}>
+                Subscribe
+              </button>
+            </div>
+            <div style={{ border: "1px solid #e5e2dc", borderRadius: 8, padding: 16 }}>
+              <h3 style={{ margin: "0 0 6px", fontSize: 14, fontFamily: MONO }}>Credit Pack</h3>
+              <p style={{ margin: "0 0 10px", fontSize: 13, opacity: 0.7 }}>100 premium AI calls, no expiry</p>
+              <button onClick={async () => {
+                const r = await fetch("/api/stripe/checkout", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "credits" }) });
+                const { url } = await r.json();
+                if (url) window.location.href = url;
+              }}
+                style={{ width: "100%", padding: "10px", borderRadius: 7, border: "none", background: "#f59e0b", color: "#92400E", cursor: "pointer", fontFamily: MONO, fontSize: 12 }}>
+                Buy Credits
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tutorial overlay */}
       {tutorialStep !== null && (() => {

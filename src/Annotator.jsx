@@ -366,6 +366,7 @@ export default function Annotator() {
   });
   const [settingsStatus, setSettingsStatus] = useState("");
   const [annoMentionIdx, setAnnoMentionIdx] = useState(0);
+  const [cmdHintIdx, setCmdHintIdx] = useState(0);
   const textRef = useRef(null);
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -999,6 +1000,11 @@ export default function Annotator() {
     setAnnoMentionIdx(0);
   }, [annoMention?.items?.length, annoMention?.startPos]);
 
+  // Reset command hint index when input changes
+  useEffect(() => {
+    setCmdHintIdx(0);
+  }, [inputText]);
+
   const insertAnnoMention = (item, plus = false) => {
     const mention = annoMention;
     if (!mention) return;
@@ -1304,6 +1310,7 @@ export default function Annotator() {
             {currentAnno ? (() => {
               const c = COLORS[currentAnno.color];
               const showCmdHints = inputText.startsWith("/") && !annoMention;
+              const filteredCmds = showCmdHints ? cmdHints.filter(h => h.cmd.startsWith(inputText.split(" ")[0])) : [];
               const annoIdx = annotations.indexOf(currentAnno);
               return (
                 <div style={{ display: "flex", flexDirection: "column", flex: 1, overflow: "hidden" }}>
@@ -1460,11 +1467,13 @@ export default function Annotator() {
                   </div>
 
                   {/* Command hints */}
-                  {!isViewingBranch && showCmdHints && (
+                  {!isViewingBranch && showCmdHints && filteredCmds.length > 0 && (
                     <div style={{ padding: "6px 16px", borderTop: "1px solid #f0ede8", background: "#faf9f6", flexShrink: 0 }}>
-                      {cmdHints.filter(h => h.cmd.startsWith(inputText.split(" ")[0])).map(h => (
+                      <div style={{ fontSize: 10, fontFamily: MONO, opacity: 0.35, marginBottom: 4 }}>↑↓ navigate · ↵/Tab select</div>
+                      {filteredCmds.map((h, i) => (
                         <div key={h.cmd} onClick={() => { setInputText(h.cmd + " "); inputRef.current?.focus(); }}
-                          style={{ padding: "3px 0", fontSize: 11, fontFamily: MONO, cursor: "pointer", display: "flex", gap: 8 }}>
+                          onMouseEnter={() => setCmdHintIdx(i)}
+                          style={{ padding: "4px 8px", fontSize: 11, fontFamily: MONO, cursor: "pointer", display: "flex", gap: 8, borderRadius: 4, background: i === cmdHintIdx ? c.bg : "transparent", transition: "background 0.1s" }}>
                           <span style={{ color: c.border, fontWeight: 500 }}>{h.cmd}</span>
                           <span style={{ opacity: 0.4 }}>{h.desc}</span>
                         </div>
@@ -1512,6 +1521,11 @@ export default function Annotator() {
                               else if (e.key === "Tab") { e.preventDefault(); insertAnnoMention(items[annoMentionIdx], true); }
                               else if (e.key === "Escape") { e.preventDefault(); setInputText(inputText.slice(0, annoMention.startPos) + inputText.slice(annoMention.startPos + annoMention.fullMatch.length)); }
                               return;
+                            }
+                            if (showCmdHints && filteredCmds.length > 0) {
+                              if (e.key === "ArrowDown") { e.preventDefault(); setCmdHintIdx(i => (i + 1) % filteredCmds.length); return; }
+                              if (e.key === "ArrowUp") { e.preventDefault(); setCmdHintIdx(i => (i - 1 + filteredCmds.length) % filteredCmds.length); return; }
+                              if ((e.key === "Enter" || e.key === "Tab") && !e.shiftKey) { e.preventDefault(); setInputText(filteredCmds[cmdHintIdx].cmd + " "); inputRef.current?.focus(); return; }
                             }
                             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendMessage(currentAnno.id); }
                           }}

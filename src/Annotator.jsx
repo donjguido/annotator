@@ -109,6 +109,42 @@ function loadAISettings() {
 }
 function saveAISettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
 
+const DEFAULT_HOTKEYS = {
+  editMode: { key: "1", ctrl: true, shift: false, alt: false, label: "Edit mode" },
+  annotateMode: { key: "2", ctrl: true, shift: false, alt: false, label: "Annotate mode" },
+  export: { key: "e", ctrl: true, shift: true, alt: false, label: "Export" },
+  settings: { key: ",", ctrl: true, shift: false, alt: false, label: "Settings" },
+};
+const HOTKEYS_KEY = "annotator_hotkeys";
+function loadHotkeys() {
+  try {
+    const h = JSON.parse(localStorage.getItem(HOTKEYS_KEY));
+    if (h && typeof h === "object") {
+      // Merge with defaults to pick up any new hotkeys added in future
+      const merged = { ...DEFAULT_HOTKEYS };
+      for (const k of Object.keys(merged)) {
+        if (h[k]) merged[k] = { ...merged[k], ...h[k] };
+      }
+      return merged;
+    }
+  } catch {}
+  return { ...DEFAULT_HOTKEYS };
+}
+function saveHotkeys(h) { localStorage.setItem(HOTKEYS_KEY, JSON.stringify(h)); }
+function formatHotkey(hk) {
+  const parts = [];
+  if (hk.ctrl) parts.push("Ctrl");
+  if (hk.alt) parts.push("Alt");
+  if (hk.shift) parts.push("Shift");
+  const keyName = hk.key === "," ? "," : hk.key === " " ? "Space" : hk.key.length === 1 ? hk.key.toUpperCase() : hk.key;
+  parts.push(keyName);
+  return parts.join("+");
+}
+function matchesHotkey(e, hk) {
+  return e.key.toLowerCase() === hk.key.toLowerCase()
+    && e.ctrlKey === hk.ctrl && e.shiftKey === hk.shift && e.altKey === hk.alt;
+}
+
 async function callAnthropic(apiKey, model, messages, system, useWebSearch) {
   const body = { model, max_tokens: 1000, system, messages };
   if (useWebSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
@@ -367,6 +403,9 @@ export default function Annotator() {
   const [settingsStatus, setSettingsStatus] = useState("");
   const [annoMentionIdx, setAnnoMentionIdx] = useState(0);
   const [cmdHintIdx, setCmdHintIdx] = useState(0);
+  const [hotkeys, setHotkeys] = useState(() => loadHotkeys());
+  const [showHotkeySettings, setShowHotkeySettings] = useState(false);
+  const [recordingHotkey, setRecordingHotkey] = useState(null); // action key being recorded
   const textRef = useRef(null);
   const fileRef = useRef(null);
   const importRef = useRef(null);
@@ -449,6 +488,33 @@ export default function Annotator() {
     document.addEventListener("click", close);
     return () => document.removeEventListener("click", close);
   }, [overlapPicker]);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handler = (e) => {
+      // Don't fire when recording a new hotkey
+      if (recordingHotkey) return;
+      // Ignore if typing in an input/textarea (unless it's a modifier combo)
+      const tag = e.target.tagName;
+      const inInput = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || e.target.isContentEditable;
+      if (inInput && !e.ctrlKey && !e.altKey) return;
+
+      if (matchesHotkey(e, hotkeys.editMode)) {
+        e.preventDefault(); switchMode("edit");
+      } else if (matchesHotkey(e, hotkeys.annotateMode)) {
+        e.preventDefault(); switchMode("annotate");
+      } else if (matchesHotkey(e, hotkeys.export)) {
+        e.preventDefault(); setShowExportMenu(v => !v);
+      } else if (matchesHotkey(e, hotkeys.settings)) {
+        e.preventDefault();
+        setSettingsDraft(aiSettings || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" });
+        setSettingsStatus("");
+        setShowSettings(s => !s);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [hotkeys, mode, aiSettings, recordingHotkey]);
 
   // Restore scroll position after mode switch
   useEffect(() => {
@@ -1065,6 +1131,7 @@ export default function Annotator() {
           <div style={{ display: "flex", borderRadius: 7, overflow: "hidden", border: "1px solid #d4d0c8" }}>
             {["edit", "annotate"].map(m => (
               <button key={m} onClick={() => switchMode(m)}
+                title={formatHotkey(hotkeys[m === "edit" ? "editMode" : "annotateMode"])}
                 style={{ padding: "5px 10px", border: "none", cursor: "pointer", fontFamily: MONO, fontSize: 11, background: mode === m ? "#1a1a1a" : "transparent", color: mode === m ? "#fff" : "#1a1a1a", transition: "all 0.15s" }}>
                 {m === "edit" ? "✏️ Edit" : "🖍️ Annotate"}
               </button>
@@ -1073,6 +1140,7 @@ export default function Annotator() {
           {mode === "annotate" && annotations.length > 0 && (
             <div style={{ position: "relative" }}>
               <button onClick={() => setShowExportMenu(v => !v)}
+                title={formatHotkey(hotkeys.export)}
                 style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: copied ? "#D1FAE5" : "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
                 {copied ? "✓ Copied!" : "📋 Export ▾"}
               </button>
@@ -1095,7 +1163,7 @@ export default function Annotator() {
             </div>
           )}
           <button onClick={() => { setSettingsDraft(aiSettings || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" }); setSettingsStatus(""); setShowSettings(true); }}
-            title="AI Provider Settings"
+            title={`AI Provider Settings (${formatHotkey(hotkeys.settings)})`}
             style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${aiSettings ? "#d4d0c8" : "#f59e0b"}`, background: aiSettings ? "transparent" : "#FEF3C7", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
             ⚙️{aiSettings ? "" : " Setup AI"}
           </button>
@@ -1186,6 +1254,49 @@ export default function Annotator() {
                 style={{ padding: "8px 14px", borderRadius: 6, border: "none", background: "#1a1a1a", color: "#fff", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
                 Save
               </button>
+            </div>
+
+            {/* Keyboard shortcuts */}
+            <div style={{ borderTop: "1px solid #e8e5e0", marginTop: 16, paddingTop: 16 }}>
+              <button onClick={() => setShowHotkeySettings(v => !v)}
+                style={{ display: "flex", alignItems: "center", gap: 6, border: "none", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11, opacity: 0.6, padding: 0 }}>
+                <span style={{ transform: showHotkeySettings ? "rotate(90deg)" : "none", transition: "transform 0.15s", display: "inline-block" }}>▶</span>
+                Keyboard Shortcuts
+              </button>
+              {showHotkeySettings && (
+                <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 6 }}>
+                  {Object.entries(hotkeys).map(([action, hk]) => (
+                    <div key={action} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 12, fontFamily: MONO, minWidth: 120 }}>{hk.label}</span>
+                      <button
+                        onClick={() => setRecordingHotkey(action)}
+                        onKeyDown={(e) => {
+                          if (recordingHotkey !== action) return;
+                          if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return; // wait for actual key
+                          e.preventDefault();
+                          e.stopPropagation();
+                          const updated = { ...hotkeys, [action]: { ...hk, key: e.key, ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey } };
+                          setHotkeys(updated);
+                          saveHotkeys(updated);
+                          setRecordingHotkey(null);
+                        }}
+                        onBlur={() => { if (recordingHotkey === action) setRecordingHotkey(null); }}
+                        style={{
+                          padding: "4px 10px", borderRadius: 5, fontFamily: MONO, fontSize: 11, cursor: "pointer", minWidth: 100, textAlign: "center",
+                          border: recordingHotkey === action ? "2px solid #3B82F6" : "1px solid #d4d0c8",
+                          background: recordingHotkey === action ? "#DBEAFE" : "#f7f6f3",
+                          color: recordingHotkey === action ? "#1E3A8A" : "#1a1a1a",
+                        }}>
+                        {recordingHotkey === action ? "Press keys…" : formatHotkey(hk)}
+                      </button>
+                    </div>
+                  ))}
+                  <button onClick={() => { setHotkeys({ ...DEFAULT_HOTKEYS }); saveHotkeys({ ...DEFAULT_HOTKEYS }); }}
+                    style={{ alignSelf: "flex-end", marginTop: 4, padding: "4px 10px", borderRadius: 5, border: "1px solid #d4d0c8", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 10, opacity: 0.5 }}>
+                    Reset to defaults
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>

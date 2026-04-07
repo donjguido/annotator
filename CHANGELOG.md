@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- Keyboard shortcuts: Ctrl+1 (Edit mode), Ctrl+2 (Annotate mode), Ctrl+Shift+E (Export), Ctrl+, (Settings) — all customizable via Settings panel, persisted in localStorage
 - `/link` slash command: type `/link` to browse and search annotations to link, with optional text/name filter (e.g. `/link foo`); uses the same picker as `@#` with Enter/Tab/Escape controls
 - Annotation mention autocomplete: typing `@#` in chat shows a dropdown of annotations to link, navigable with arrow keys, Enter to select, Tab to select with context (+), Escape to dismiss
 - Multi-format document upload: PDF, DOCX, EPUB, HTML, RTF, TXT, Markdown, CSV, and more

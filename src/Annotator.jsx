@@ -452,6 +452,14 @@ export default function Annotator() {
   const [hotkeys, setHotkeys] = useState(() => loadHotkeys());
   const [showHotkeySettings, setShowHotkeySettings] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(null); // action key being recorded
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [useSharedKey, setUseSharedKey] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("annotator_use_shared_key")); } catch { return null; }
+  });
+  const [usageInfo, setUsageInfo] = useState(null);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(() => {
     try { return localStorage.getItem("annotator_tutorial_seen") ? null : 0; } catch { return 0; }
   });
@@ -597,6 +605,26 @@ export default function Annotator() {
       setTimeout(() => { docPaneRef.current.scrollTop = scrollPosRef.current[mode]; }, 0);
     }
   }, [mode]);
+
+  // Session fetch on mount — only runs on deployed instances
+  useEffect(() => {
+    if (!IS_DEPLOYED) { setAuthLoading(false); return; }
+    fetch("/api/auth/session", { credentials: "include" })
+      .then(r => r.json())
+      .then(data => {
+        setCurrentUser(data.user);
+        setUsageInfo(data.usage);
+        if (data.user && useSharedKey === null) {
+          const hasOwnKey = loadAISettings()?.apiKey;
+          if (!hasOwnKey) {
+            setUseSharedKey(true);
+            localStorage.setItem("annotator_use_shared_key", "true");
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => setAuthLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const switchMode = (newMode) => {
     if (newMode === mode) return;

@@ -1309,6 +1309,12 @@ export default function Annotator() {
               </>
             )}
 
+            {IS_DEPLOYED && (settingsDraft.provider === "ollama" || settingsDraft.provider === "custom") && (
+              <p style={{ fontSize: 11, fontFamily: MONO, margin: "0 0 12px", lineHeight: 1.5, padding: "8px 10px", borderRadius: 6, background: "#FEF3C7", border: "1px solid #FCD34D" }}>
+                Local providers don't work on the hosted web app — the server can't reach your localhost. Run the app locally instead.
+              </p>
+            )}
+
             {!PROVIDERS.find(p => p.id === settingsDraft.provider)?.supportsSearch && (
               <p style={{ fontSize: 11, fontFamily: MONO, opacity: 0.4, margin: "0 0 12px", lineHeight: 1.5 }}>
                 Note: /search (web search) is only available with Anthropic. Other providers will ignore it.

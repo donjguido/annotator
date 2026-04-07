@@ -1800,21 +1800,30 @@ export default function Annotator() {
           ? `polygon(evenodd, 0 0, 100% 0, 100% 100%, 0 100%, 0 0, ${tutorialRect.left - pad}px ${tutorialRect.top - pad}px, ${tutorialRect.left - pad}px ${tutorialRect.top + tutorialRect.height + pad}px, ${tutorialRect.left + tutorialRect.width + pad}px ${tutorialRect.top + tutorialRect.height + pad}px, ${tutorialRect.left + tutorialRect.width + pad}px ${tutorialRect.top - pad}px, ${tutorialRect.left - pad}px ${tutorialRect.top - pad}px)`
           : undefined;
         // Position popup near target or centered
+        const isMobile = window.innerWidth < 600;
+        const popupW = isMobile ? window.innerWidth - 32 : 340;
+        const POPUP_H = 220; // estimated height
         const popupStyle = hasTarget ? (() => {
+          // If target covers >30% of viewport, center the popup instead
+          const targetArea = tutorialRect.width * tutorialRect.height;
+          const viewportArea = window.innerWidth * window.innerHeight;
+          if (targetArea > viewportArea * 0.3 || isMobile) {
+            return {
+              position: "fixed", zIndex: 9999,
+              top: "50%", left: "50%", transform: "translate(-50%, -50%)",
+              width: popupW,
+            };
+          }
           const below = tutorialRect.top + tutorialRect.height + pad + 12;
-          const above = tutorialRect.top - pad - 12;
-          const fitsBelow = below + 200 < window.innerHeight;
-          return {
-            position: "fixed", zIndex: 9999,
-            top: fitsBelow ? below : undefined,
-            bottom: fitsBelow ? undefined : (window.innerHeight - above),
-            left: Math.max(16, Math.min(tutorialRect.left, window.innerWidth - 356)),
-            maxWidth: 340,
-          };
+          const above = tutorialRect.top - pad - 12 - POPUP_H;
+          const fitsBelow = below + POPUP_H < window.innerHeight - 16;
+          const top = Math.max(16, fitsBelow ? below : above);
+          const left = Math.max(16, Math.min(tutorialRect.left, window.innerWidth - popupW - 16));
+          return { position: "fixed", zIndex: 9999, top, left, width: popupW };
         })() : {
           position: "fixed", zIndex: 9999,
           top: "50%", left: "50%", transform: "translate(-50%, -50%)",
-          maxWidth: 380,
+          width: popupW,
         };
         const isLast = tutorialStep === TUTORIAL_STEPS.length - 1;
         return (
@@ -1839,9 +1848,9 @@ export default function Annotator() {
             {/* Popup card */}
             <div style={{
               ...popupStyle,
-              background: "#fff", borderRadius: 12, padding: "20px 24px",
+              background: "#fff", borderRadius: isMobile ? 16 : 12, padding: isMobile ? "20px 20px" : "20px 24px",
               boxShadow: "0 8px 32px rgba(0,0,0,0.18)",
-              fontFamily: FONT,
+              fontFamily: FONT, boxSizing: "border-box",
             }}>
               <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 600, color: "#1a1a1a" }}>{step.title}</h3>
               <p style={{ margin: "0 0 16px", fontSize: 13, lineHeight: 1.6, color: "#444", opacity: 0.85 }}>{step.body}</p>

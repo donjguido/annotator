@@ -77,6 +77,10 @@ Settings are saved to `localStorage` — you only configure once per browser.
 
 ![Export options](assets/export_options.png)
 
+## Use as AI context
+
+The entire app lives in a single file — [`src/Annotator.jsx`](src/Annotator.jsx). You can download it and upload it directly to Claude, ChatGPT, or any chat interface that accepts file attachments. This gives the AI full context of the codebase in one shot, making it easy to ask questions about the code, request modifications, or generate patches without any extra setup.
+
 ## Tech Stack
 
 - [React 19](https://react.dev) + [Vite 6](https://vite.dev)

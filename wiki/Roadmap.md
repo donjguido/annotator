@@ -31,6 +31,12 @@ We're interested in building these if there's enough community demand. If any of
 - **Subscription for API access** — Use AI models without managing your own API keys. We'd handle the provider integration so you can just pick a model and go.
 - **Usage-based pricing** — Pay only for what you use, without needing accounts with individual AI providers.
 
+### Integrations & packaging
+
+- **Obsidian plugin** — Use Annotator's highlight-and-chat workflow directly inside Obsidian vaults.
+- **NPM package** — Publish a reusable component for embedding Annotator in other apps (available on request).
+- **Dynamic file classification** — Browse and organize your local folders from within Annotator, with interactive detection and handling of document formats.
+
 ### Other ideas we're exploring
 
 - Annotation templates and presets

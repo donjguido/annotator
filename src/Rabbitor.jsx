@@ -206,17 +206,20 @@ function matchesHotkey(e, hk) {
 
 const IS_DEPLOYED = !["localhost", "127.0.0.1"].includes(window.location.hostname);
 
-async function aiFetch(url, options) {
+async function aiFetch(url, options, { useSharedKey: shared, provider } = {}) {
   if (!IS_DEPLOYED) return fetch(url, options);
+  const payload = { url, headers: options.headers, body: JSON.parse(options.body) };
+  if (shared) { payload.useSharedKey = true; payload.provider = provider; }
   const res = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ url, headers: options.headers, body: JSON.parse(options.body) }),
+    credentials: "include",
+    body: JSON.stringify(payload),
   });
   return res;
 }
 
-async function callAnthropic(apiKey, model, messages, system, useWebSearch) {
+async function callAnthropic(apiKey, model, messages, system, useWebSearch, fetchOpts = {}) {
   const body = { model, max_tokens: 1000, system, messages };
   if (useWebSearch) body.tools = [{ type: "web_search_20250305", name: "web_search" }];
   const headers = {
@@ -229,13 +232,13 @@ async function callAnthropic(apiKey, model, messages, system, useWebSearch) {
     method: "POST",
     headers,
     body: JSON.stringify(body),
-  });
+  }, fetchOpts);
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
   return data.content?.filter(b => b.type === "text").map(b => b.text).join("\n") || "No response.";
 }
 
-async function callOpenAICompat(baseUrl, apiKey, model, messages, system) {
+async function callOpenAICompat(baseUrl, apiKey, model, messages, system, fetchOpts = {}) {
   const allMessages = [{ role: "system", content: system }, ...messages];
   const headers = { "Content-Type": "application/json" };
   if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
@@ -243,13 +246,13 @@ async function callOpenAICompat(baseUrl, apiKey, model, messages, system) {
     method: "POST",
     headers,
     body: JSON.stringify({ model, messages: allMessages, max_tokens: 1000 }),
-  });
+  }, fetchOpts);
   const data = await res.json();
   if (data.error) throw new Error(data.error.message || JSON.stringify(data.error));
   return data.choices?.[0]?.message?.content || "No response.";
 }
 
-async function callGemini(apiKey, model, messages, system) {
+async function callGemini(apiKey, model, messages, system, fetchOpts = {}) {
   const contents = messages.map(m => ({
     role: m.role === "assistant" ? "model" : "user",
     parts: [{ text: m.content }],
@@ -264,14 +267,15 @@ async function callGemini(apiKey, model, messages, system) {
         contents,
         generationConfig: { maxOutputTokens: 1000 },
       }),
-    }
+    },
+    fetchOpts,
   );
   const data = await res.json();
   if (data.error) throw new Error(data.error.message);
   return data.candidates?.[0]?.content?.parts?.map(p => p.text).join("\n") || "No response.";
 }
 
-async function callAI(settings, { messages, highlightedText, fullDoc, useContext, useWebSearch, linkedContext, attachments }) {
+async function callAI(settings, { messages, highlightedText, fullDoc, useContext, useWebSearch, linkedContext, attachments }, sharedKeyOpts) {
   if (!settings?.provider) throw new Error("No AI provider configured — open Settings (gear icon) to set up.");
 
   const ctx = useContext ? (fullDoc.length > 6000 ? fullDoc.slice(0, 6000) + "\n…[truncated]" : fullDoc) : "";
@@ -286,15 +290,16 @@ async function callAI(settings, { messages, highlightedText, fullDoc, useContext
 
   const { provider, apiKey, model, baseUrl } = settings;
   const prov = PROVIDERS.find(p => p.id === provider);
+  const fetchOpts = sharedKeyOpts ? { useSharedKey: true, provider } : {};
 
-  if (provider === "anthropic") return callAnthropic(apiKey, model, messages, system, useWebSearch && prov?.supportsSearch);
-  if (provider === "google") return callGemini(apiKey, model, messages, system);
+  if (provider === "anthropic") return callAnthropic(apiKey, model, messages, system, useWebSearch && prov?.supportsSearch, fetchOpts);
+  if (provider === "google") return callGemini(apiKey, model, messages, system, fetchOpts);
 
   // OpenAI, OpenRouter, Ollama, Custom — all OpenAI-compatible
   const url = provider === "openai" ? "https://api.openai.com"
     : provider === "openrouter" ? "https://openrouter.ai/api"
     : baseUrl || prov?.defaultUrl || "http://localhost:11434";
-  return callOpenAICompat(url, apiKey, model, messages, system);
+  return callOpenAICompat(url, apiKey, model, messages, system, fetchOpts);
 }
 
 function downloadFile(content, filename, mime) {
@@ -478,6 +483,14 @@ export default function Rabbitor() {
   const [hotkeys, setHotkeys] = useState(() => loadHotkeys());
   const [showHotkeySettings, setShowHotkeySettings] = useState(false);
   const [recordingHotkey, setRecordingHotkey] = useState(null); // action key being recorded
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [useSharedKey, setUseSharedKey] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("annotator_use_shared_key")); } catch { return null; }
+  });
+  const [usageInfo, setUsageInfo] = useState(null);
+  const [showUpgradeModal, setShowUpgradeModal] = useState(false);
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [tutorialStep, setTutorialStep] = useState(() => {
     try { return localStorage.getItem("rabbitor_tutorial_seen") ? null : 0; } catch { return 0; }
   });
@@ -624,6 +637,34 @@ export default function Rabbitor() {
       setTimeout(() => { docPaneRef.current.scrollTop = scrollPosRef.current[mode]; }, 0);
     }
   }, [mode]);
+
+  // Session fetch on mount — only runs on deployed instances
+  useEffect(() => {
+    if (!IS_DEPLOYED) { setAuthLoading(false); return; }
+    fetch("/api/auth/session", { credentials: "include" })
+      .then(r => r.json())
+      .then(data => {
+        setCurrentUser(data.user);
+        setUsageInfo(data.usage);
+        if (data.user && useSharedKey === null) {
+          const hasOwnKey = loadAISettings()?.apiKey;
+          if (!hasOwnKey) {
+            setUseSharedKey(true);
+            localStorage.setItem("annotator_use_shared_key", "true");
+          }
+        }
+      })
+      .catch(() => {})
+      .finally(() => setAuthLoading(false));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const refreshUsage = useCallback(() => {
+    if (!IS_DEPLOYED || !currentUser) return;
+    fetch("/api/auth/session", { credentials: "include" })
+      .then(r => r.json())
+      .then(data => { if (data.usage) setUsageInfo(data.usage); })
+      .catch(() => {});
+  }, [currentUser]);
 
   const switchMode = (newMode) => {
     if (newMode === mode) return;
@@ -864,11 +905,13 @@ export default function Rabbitor() {
     const attachments = anno.attachments || [];
 
     try {
-      const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch, linkedContext: linked, attachments });
+      const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: withContext, useWebSearch: doWebSearch, linkedContext: linked, attachments }, useSharedKey ? { useSharedKey: true } : undefined);
       const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
+      if (useSharedKey) refreshUsage();
       const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
       setAnnotations(prev => prev.map(a => a.id === id ? appendToThread(a, sentBranch, aiMsg) : a));
     } catch (err) {
+      if (err?.message?.includes("Daily free limit") || err?.message?.includes("Upgrade")) setShowUpgradeModal(true);
       const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString(), isError: true };
       setAnnotations(prev => prev.map(a => a.id === id ? appendToThread(a, sentBranch, errMsg) : a));
     }
@@ -916,11 +959,13 @@ export default function Rabbitor() {
       if (apiMessages.length > 0 && apiMessages[0].role !== "user") apiMessages.shift();
 
       try {
-        const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: editedMsg.withContext || false, useWebSearch: false });
+        const answer = await callAI(aiSettings, { messages: apiMessages, highlightedText: anno.text, fullDoc: doc, useContext: editedMsg.withContext || false, useWebSearch: false }, useSharedKey ? { useSharedKey: true } : undefined);
         const aiName = PROVIDERS.find(p => p.id === aiSettings?.provider)?.name?.split(" ")[0] || "AI";
+        if (useSharedKey) refreshUsage();
         const aiMsg = { role: "assistant", content: answer, author: aiName, timestamp: new Date().toISOString() };
         setAnnotations(prev => prev.map(a => a.id === annoId ? appendToThread(a, -1, aiMsg) : a));
       } catch (err) {
+        if (err?.message?.includes("Daily free limit") || err?.message?.includes("Upgrade")) setShowUpgradeModal(true);
         const errMsg = { role: "assistant", content: err?.message || "Error getting response.", author: "AI", timestamp: new Date().toISOString(), isError: true };
         setAnnotations(prev => prev.map(a => a.id === annoId ? appendToThread(a, -1, errMsg) : a));
       }
@@ -1368,6 +1413,86 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
               )}
             </div>
           )}
+          {IS_DEPLOYED && !authLoading && (
+            currentUser ? (
+              <div style={{ position: "relative" }}>
+                <button onClick={() => setShowUserMenu(v => !v)}
+                  style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 10px", borderRadius: 7, border: "1px solid #d4d0c8", background: "transparent", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
+                  {currentUser.avatarUrl ? (
+                    <img src={currentUser.avatarUrl} alt="" style={{ width: 20, height: 20, borderRadius: "50%" }} />
+                  ) : (
+                    <span style={{ width: 20, height: 20, borderRadius: "50%", background: "#e5e2dc", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 10 }}>
+                      {currentUser.name?.[0]?.toUpperCase() || "?"}
+                    </span>
+                  )}
+                  <span>{currentUser.name?.split(" ")[0] || "Account"}</span>
+                </button>
+                {showUserMenu && (
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e2dc", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", minWidth: 200, zIndex: 1000, fontFamily: MONO, fontSize: 11 }}
+                    onClick={() => setShowUserMenu(false)}>
+                    <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0ede8", opacity: 0.6 }}>{currentUser.email}</div>
+                    {usageInfo && (
+                      <div style={{ padding: "10px 14px", borderBottom: "1px solid #f0ede8" }}>
+                        {usageInfo.tier === "paid"
+                          ? <span>Pro — {usageInfo.dailyUsed} calls today</span>
+                          : <span>{usageInfo.dailyRemaining}/{usageInfo.dailyLimit} free calls left</span>}
+                        {usageInfo.credits > 0 && <div style={{ marginTop: 4 }}>{usageInfo.credits} credits remaining</div>}
+                      </div>
+                    )}
+                    {usageInfo?.tier !== "paid" && (
+                      <button onClick={() => setShowUpgradeModal(true)}
+                        style={{ display: "block", width: "100%", padding: "10px 14px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: MONO, fontSize: 11, color: "#f59e0b", fontWeight: 600, borderBottom: "1px solid #f0ede8" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        Upgrade to Pro
+                      </button>
+                    )}
+                    {usageInfo?.subscriptionStatus === "active" && (
+                      <button onClick={async () => {
+                        const r = await fetch("/api/stripe/portal", { method: "POST", credentials: "include" });
+                        const { url } = await r.json();
+                        if (url) window.location.href = url;
+                      }}
+                        style={{ display: "block", width: "100%", padding: "10px 14px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: MONO, fontSize: 11, borderBottom: "1px solid #f0ede8" }}
+                        onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                        Manage Subscription
+                      </button>
+                    )}
+                    <button onClick={async () => {
+                      await fetch("/api/auth/logout", { method: "POST", credentials: "include" });
+                      setCurrentUser(null); setUsageInfo(null); setUseSharedKey(false);
+                      localStorage.removeItem("annotator_use_shared_key");
+                    }}
+                      style={{ display: "block", width: "100%", padding: "10px 14px", border: "none", background: "transparent", textAlign: "left", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      Sign Out
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ position: "relative" }}>
+                <button onClick={() => setShowUserMenu(v => !v)}
+                  style={{ padding: "5px 10px", borderRadius: 7, border: "1px solid #10B981", background: "#D1FAE5", cursor: "pointer", fontFamily: MONO, fontSize: 11, color: "#065F46" }}>
+                  Sign In
+                </button>
+                {showUserMenu && (
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, background: "#fff", border: "1px solid #e5e2dc", borderRadius: 8, boxShadow: "0 4px 12px rgba(0,0,0,0.08)", minWidth: 180, zIndex: 1000, fontFamily: MONO, fontSize: 11 }}
+                    onClick={() => setShowUserMenu(false)}>
+                    <a href="/api/auth/github"
+                      style={{ display: "block", padding: "10px 14px", textDecoration: "none", color: "#1a1a1a", borderBottom: "1px solid #f0ede8" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      Continue with GitHub
+                    </a>
+                    <a href="/api/auth/google"
+                      style={{ display: "block", padding: "10px 14px", textDecoration: "none", color: "#1a1a1a" }}
+                      onMouseEnter={e => e.currentTarget.style.background = "#f7f6f3"} onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                      Continue with Google
+                    </a>
+                  </div>
+                )}
+              </div>
+            )
+          )}
           <button data-tutorial="settings" onClick={() => { setSettingsDraft(aiSettings || { provider: "anthropic", apiKey: "", model: PROVIDERS[0].defaultModel, baseUrl: "" }); setSettingsStatus(""); setShowSettings(true); }}
             title={`AI Provider Settings (${formatHotkey(hotkeys.settings)})`}
             style={{ padding: "5px 10px", borderRadius: 7, border: `1px solid ${aiSettings ? "#d4d0c8" : "#f59e0b"}`, background: aiSettings ? "transparent" : "#FEF3C7", cursor: "pointer", fontFamily: MONO, fontSize: 11 }}>
@@ -1381,6 +1506,12 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
         </div>
       </div>
 
+      {IS_DEPLOYED && !authLoading && !currentUser && (
+        <div style={{ background: "#D1FAE5", padding: "6px 16px", fontFamily: MONO, fontSize: 11, textAlign: "center", color: "#065F46", borderBottom: "1px solid #A7F3D0" }}>
+          Sign in for free AI calls — no API key needed
+        </div>
+      )}
+
       {/* Settings modal */}
       {showSettings && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -1392,6 +1523,23 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
               <button onClick={() => setShowSettings(false)} style={{ border: "none", background: "transparent", fontSize: 16, cursor: "pointer", opacity: 0.4 }}>✕</button>
             </div>
 
+            {currentUser && IS_DEPLOYED && (
+              <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 0", borderBottom: "1px solid #f0ede8", marginBottom: 12 }}>
+                <label style={{ fontFamily: MONO, fontSize: 11, display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                  <input type="checkbox" checked={useSharedKey || false} onChange={e => {
+                    setUseSharedKey(e.target.checked);
+                    localStorage.setItem("annotator_use_shared_key", JSON.stringify(e.target.checked));
+                  }} />
+                  Use shared AI key (no API key needed)
+                </label>
+                {useSharedKey && usageInfo && (
+                  <span style={{ fontFamily: MONO, fontSize: 10, opacity: 0.6 }}>
+                    {usageInfo.tier === "paid" ? "Pro" : `${usageInfo.dailyRemaining}/${usageInfo.dailyLimit} free`}
+                  </span>
+                )}
+              </div>
+            )}
+
             <label style={{ display: "block", fontSize: 11, fontFamily: MONO, opacity: 0.5, marginBottom: 4, textTransform: "uppercase" }}>Provider</label>
             <select value={settingsDraft.provider} onChange={e => {
               const p = PROVIDERS.find(x => x.id === e.target.value);
@@ -1402,7 +1550,7 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
               {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
 
-            {PROVIDERS.find(p => p.id === settingsDraft.provider)?.needsKey && (
+            {(!useSharedKey || !currentUser) && PROVIDERS.find(p => p.id === settingsDraft.provider)?.needsKey && (
               <>
                 <label style={{ display: "block", fontSize: 11, fontFamily: MONO, opacity: 0.5, marginBottom: 4, textTransform: "uppercase" }}>API Key</label>
                 <input type="password" value={settingsDraft.apiKey || ""} onChange={e => { setSettingsDraft(prev => ({ ...prev, apiKey: e.target.value })); setSettingsStatus(""); }}
@@ -1976,6 +2124,44 @@ h1{font-size:1.4em;border-bottom:1px solid #d4d0c8;padding-bottom:.4em}
           </div>
         )}
       </div>
+
+      {/* Upgrade modal */}
+      {showUpgradeModal && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 10000 }}
+          onClick={() => setShowUpgradeModal(false)}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 28, maxWidth: 420, width: "90%", fontFamily: FONT }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              <h2 style={{ margin: 0, fontSize: 18 }}>Upgrade</h2>
+              <button onClick={() => setShowUpgradeModal(false)} style={{ border: "none", background: "transparent", fontSize: 16, cursor: "pointer", opacity: 0.4 }}>✕</button>
+            </div>
+            <div style={{ border: "1px solid #e5e2dc", borderRadius: 8, padding: 16, marginBottom: 12 }}>
+              <h3 style={{ margin: "0 0 6px", fontSize: 14, fontFamily: MONO }}>Pro Plan</h3>
+              <p style={{ margin: "0 0 10px", fontSize: 13, opacity: 0.7 }}>Premium AI models, higher daily limits</p>
+              <button onClick={async () => {
+                const r = await fetch("/api/stripe/checkout", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "subscription" }) });
+                const { url } = await r.json();
+                if (url) window.location.href = url;
+              }}
+                style={{ width: "100%", padding: "10px", borderRadius: 7, border: "none", background: "#1a1a1a", color: "#fff", cursor: "pointer", fontFamily: MONO, fontSize: 12 }}>
+                Subscribe
+              </button>
+            </div>
+            <div style={{ border: "1px solid #e5e2dc", borderRadius: 8, padding: 16 }}>
+              <h3 style={{ margin: "0 0 6px", fontSize: 14, fontFamily: MONO }}>Credit Pack</h3>
+              <p style={{ margin: "0 0 10px", fontSize: 13, opacity: 0.7 }}>100 premium AI calls, no expiry</p>
+              <button onClick={async () => {
+                const r = await fetch("/api/stripe/checkout", { method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "credits" }) });
+                const { url } = await r.json();
+                if (url) window.location.href = url;
+              }}
+                style={{ width: "100%", padding: "10px", borderRadius: 7, border: "none", background: "#f59e0b", color: "#92400E", cursor: "pointer", fontFamily: MONO, fontSize: 12 }}>
+                Buy Credits
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Tutorial overlay */}
       {tutorialStep !== null && (() => {
